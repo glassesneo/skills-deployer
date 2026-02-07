@@ -10,7 +10,7 @@ Add this flake as an input and declare your skills:
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    skills-deployer.url = "github:your-org/skills-deployer";
+    skills-deployer.url = "github:glassesneo/skills-deployer";
 
     # Skill sources -- any flake or path
     my-skills-repo.url = "github:your-org/agent-skills";
