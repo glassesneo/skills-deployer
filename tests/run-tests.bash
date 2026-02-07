@@ -83,6 +83,10 @@ skip_test() {
 
 # Detect Nix build sandbox: NIX_BUILD_TOP is set inside nix-build/nix flake check
 IN_NIX_SANDBOX="${NIX_BUILD_TOP:-}"
+NIX_EVAL_AVAILABLE=true
+if ! nix eval --impure --raw --expr '1' >/dev/null 2>&1; then
+  NIX_EVAL_AVAILABLE=false
+fi
 
 # -- Helper: create a manifest JSON for a single skill -----------
 make_manifest() {
@@ -770,6 +774,48 @@ test_T23_symlink_no_dotfiles() {
 }
 
 # ================================================================
+# T24: default_mode_implicit_symlink (mkDeploySkills default)
+# ================================================================
+test_T24_default_mode_implicit_symlink() {
+  local workdir
+  workdir=$(mktemp -d)
+  trap 'rm -rf "$workdir"' RETURN
+
+  touch "$workdir/flake.nix"
+  cp -R "$FIXTURES_DIR/valid-skill/sub-a" "$workdir/source-skill"
+
+  cat > "$workdir/program-path.nix" <<EOF
+let
+  pkgs = import <nixpkgs> {};
+  lib = import "$REPO_ROOT/lib";
+  app = lib.mkDeploySkills pkgs {
+    skills = {
+      my-skill = {
+        source = "$workdir/source-skill";
+        subdir = "sub-a";
+      };
+    };
+  };
+in app.program
+EOF
+
+  local program_path output exit_code=0
+  program_path=$(nix eval --impure --raw --file "$workdir/program-path.nix" 2>&1) || exit_code=$?
+  assert_eq "$exit_code" 0 "nix eval should produce deploy-skills program path"
+
+  output=$(cd "$workdir" && "$program_path" 2>&1) || exit_code=$?
+  assert_eq "$exit_code" 0 "deploy should succeed when default mode is omitted"
+  assert_contains "$output" "created (symlink)" "should create using symlink mode"
+
+  assert_file_exists "$workdir/.agents/skills/my-skill/SKILL.md"
+  assert_symlink "$workdir/.agents/skills/my-skill/SKILL.md"
+
+  local marker_mode
+  marker_mode=$(jq -r '.mode' "$workdir/.agents/skills/my-skill/$MARKER_FILENAME")
+  assert_eq "$marker_mode" "symlink" "marker mode should match implicit default"
+}
+
+# ================================================================
 # Run all tests
 # ================================================================
 MARKER_FILENAME=".skills-deployer-managed"
@@ -786,12 +832,14 @@ run_test test_T07_source_update
 run_test test_T08_dry_run_no_changes
 run_test test_T09_dry_run_with_changes
 run_test test_T10_validation_missing_skillmd
-if [[ -n "$IN_NIX_SANDBOX" ]]; then
-  skip_test test_T11_validation_subdir_traversal "requires nix eval --impure (unavailable in sandbox)"
-  skip_test test_T12_validation_absolute_subdir "requires nix eval --impure (unavailable in sandbox)"
+if [[ -n "$IN_NIX_SANDBOX" || "$NIX_EVAL_AVAILABLE" != "true" ]]; then
+  skip_test test_T11_validation_subdir_traversal "requires nix eval --impure (unavailable in this environment)"
+  skip_test test_T12_validation_absolute_subdir "requires nix eval --impure (unavailable in this environment)"
+  skip_test test_T24_default_mode_implicit_symlink "requires nix eval --impure (unavailable in this environment)"
 else
   run_test test_T11_validation_subdir_traversal
   run_test test_T12_validation_absolute_subdir
+  run_test test_T24_default_mode_implicit_symlink
 fi
 run_test test_T13_conflict_unmanaged
 run_test test_T14_not_project_root

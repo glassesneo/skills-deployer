@@ -1,7 +1,7 @@
 # mkDeploySkills :: {
 #   pkgs           : Nixpkgs package set
 #   skills         : AttrSet<SkillName, SkillSpec>
-#   defaultMode    : "symlink" | "copy"          (default: "copy")
+#   defaultMode    : "symlink" | "copy"          (default: "symlink")
 #   defaultTargetDir : String                     (default: ".agents/skills")
 # } -> Derivation
 #
@@ -14,7 +14,7 @@
 {
   pkgs,
   skills, # AttrSet<String, SkillSpec>
-  defaultMode ? "copy",
+  defaultMode ? "symlink",
   defaultTargetDir ? ".agents/skills",
 }: let
   lib = pkgs.lib;

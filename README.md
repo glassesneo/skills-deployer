@@ -31,7 +31,7 @@ Add this flake as an input and declare your skills:
       apps = eachSystem ({ system, pkgs }: {
         deploy-skills = skills-deployer.lib.mkDeploySkills pkgs {
             # Global defaults
-            defaultMode = "copy";           # or "symlink"
+            defaultMode = "symlink";        # or "copy"
             defaultTargetDir = ".agents/skills";
 
             skills = {
@@ -44,7 +44,7 @@ Add this flake as an input and declare your skills:
               debugging = {
                 source = my-skills-repo;
                 subdir = "skills/debugging";
-                mode = "symlink";             # Override: symlink for this skill
+                mode = "copy";                # Override: copy for this skill
               };
 
               ui-patterns = {
@@ -76,7 +76,7 @@ nix run .#deploy-skills -- --dry-run
 ```nix
 mkDeploySkills pkgs {
   skills = { ... };
-  defaultMode = "copy";          # optional
+  defaultMode = "symlink";       # optional
   defaultTargetDir = ".agents/skills"; # optional
 }
 ```
@@ -92,7 +92,7 @@ mkDeploySkills pkgs {
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `skills` | `AttrSet<String, SkillSpec>` | Yes | -- | Skills to deploy, keyed by destination name |
-| `defaultMode` | `"symlink"` or `"copy"` | No | `"copy"` | Default deployment mode |
+| `defaultMode` | `"symlink"` or `"copy"` | No | `"symlink"` | Default deployment mode |
 | `defaultTargetDir` | `String` | No | `".agents/skills"` | Default parent directory for skills |
 
 Compatibility note: if you previously used `"${skills-deployer.lib.mkDeploySkills { ... }}/bin/deploy-skills"`, migrate to `skills-deployer.lib.mkDeploySkills pkgs { ... }`.
@@ -108,13 +108,13 @@ Compatibility note: if you previously used `"${skills-deployer.lib.mkDeploySkill
 
 ## Deployment Modes
 
-### `copy` (default)
-
-Files are copied from the Nix store into the target directory. The skill is fully independent of the Nix store after deployment and can be locally edited.
-
-### `symlink`
+### `symlink` (default)
 
 Individual files are symlinked from the Nix store into the target directory. The skill directory itself is a real directory (to allow the marker file), but each file inside is a symlink. Symlinked skills are immutable (Nix store is read-only).
+
+### `copy`
+
+Files are copied from the Nix store into the target directory. The skill is fully independent of the Nix store after deployment and can be locally edited.
 
 Use `copy` for skills you want to customize locally. Use `symlink` for shared/immutable skills where you want to save disk space and ensure consistency.
 
@@ -123,7 +123,7 @@ Use `copy` for skills you want to customize locally. Use `symlink` for shared/im
 Each deployed skill directory contains a `.skills-deployer-managed` file (single-line JSON):
 
 ```json
-{"version":"1","skillName":"code-review","mode":"copy","sourcePath":"/nix/store/abc123-source/skills/code-review","deployedAt":"2026-02-07T20:14:00Z"}
+{"version":"1","skillName":"code-review","mode":"symlink","sourcePath":"/nix/store/abc123-source/skills/code-review","deployedAt":"2026-02-07T20:14:00Z"}
 ```
 
 This marker is used for:
