@@ -16,7 +16,7 @@
           pkgs = nixpkgs.legacyPackages.${system};
         });
   in {
-    lib.mkDeploySkills = import ./lib/mkDeploySkills.nix;
+    lib = import ./lib;
 
     # Self-test app (uses fixtures)
     apps = eachSystem ({pkgs, ...}: {

@@ -29,11 +29,7 @@ Add this flake as an input and declare your skills:
       });
     in {
       apps = eachSystem ({ system, pkgs }: {
-        deploy-skills = {
-          type = "app";
-          program = "${skills-deployer.lib.mkDeploySkills {
-            inherit pkgs;
-
+        deploy-skills = skills-deployer.lib.mkDeploySkills pkgs {
             # Global defaults
             defaultMode = "copy";           # or "symlink"
             defaultTargetDir = ".agents/skills";
@@ -57,8 +53,7 @@ Add this flake as an input and declare your skills:
                 targetDir = ".claude/skills"; # Override: different target dir
               };
             };
-          }}/bin/deploy-skills";
-        };
+          };
       });
     };
 }
@@ -76,14 +71,31 @@ nix run .#deploy-skills -- --dry-run
 
 ## Configuration Reference
 
-### `mkDeploySkills` parameters
+### `mkDeploySkills` signature
+
+```nix
+mkDeploySkills pkgs {
+  skills = { ... };
+  defaultMode = "copy";          # optional
+  defaultTargetDir = ".agents/skills"; # optional
+}
+```
+
+### First argument (`pkgs`)
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `pkgs` | Nixpkgs set | Yes | -- | Nixpkgs package set for the target system |
+
+### Second argument (configuration attrset)
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
 | `skills` | `AttrSet<String, SkillSpec>` | Yes | -- | Skills to deploy, keyed by destination name |
 | `defaultMode` | `"symlink"` or `"copy"` | No | `"copy"` | Default deployment mode |
 | `defaultTargetDir` | `String` | No | `".agents/skills"` | Default parent directory for skills |
+
+Compatibility note: if you previously used `"${skills-deployer.lib.mkDeploySkills { ... }}/bin/deploy-skills"`, migrate to `skills-deployer.lib.mkDeploySkills pkgs { ... }`.
 
 ### `SkillSpec` attributes
 
