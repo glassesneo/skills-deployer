@@ -20,3 +20,4 @@ via `builtins.readFile` in `lib/mkDeploySkills.nix` — it is not executed direc
 - **IMPORTANT**: `MANIFEST_PATH` is injected by the Nix wrapper. Never hardcode manifest paths.
 - Validate all skills before writing any files (fail-fast pattern).
 - Use `atomic_replace()` for updates — never leave partial state on disk.
+- `ENTRY_NAME` (from manifest entry's `name` field) is used for filesystem paths and marker writes. `SKILL_NAME` (manifest key) is used for ACTION_MAP lookups and log output. For existing single-target manifests, ENTRY_NAME == SKILL_NAME.

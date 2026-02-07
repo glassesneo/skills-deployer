@@ -93,7 +93,8 @@ while IFS= read -r SKILL_NAME; do
   SOURCE_PATH=$(echo "$MANIFEST" | jq -r --arg s "$SKILL_NAME" '.[$s].sourcePath')
   MODE=$(echo "$MANIFEST" | jq -r --arg s "$SKILL_NAME" '.[$s].mode')
   TARGET_DIR=$(echo "$MANIFEST" | jq -r --arg s "$SKILL_NAME" '.[$s].targetDir')
-  DEST="$TARGET_DIR/$SKILL_NAME"
+  ENTRY_NAME=$(echo "$MANIFEST" | jq -r --arg s "$SKILL_NAME" '.[$s].name')
+  DEST="$TARGET_DIR/$ENTRY_NAME"
 
   if [[ ! -e "$DEST" ]]; then
     ACTION_MAP[$SKILL_NAME]="create"
@@ -224,7 +225,8 @@ while IFS= read -r SKILL_NAME; do
   SOURCE_PATH=$(echo "$MANIFEST" | jq -r --arg s "$SKILL_NAME" '.[$s].sourcePath')
   MODE=$(echo "$MANIFEST" | jq -r --arg s "$SKILL_NAME" '.[$s].mode')
   TARGET_DIR=$(echo "$MANIFEST" | jq -r --arg s "$SKILL_NAME" '.[$s].targetDir')
-  DEST="$TARGET_DIR/$SKILL_NAME"
+  ENTRY_NAME=$(echo "$MANIFEST" | jq -r --arg s "$SKILL_NAME" '.[$s].name')
+  DEST="$TARGET_DIR/$ENTRY_NAME"
 
   mkdir -p "$TARGET_DIR"
 
@@ -235,11 +237,11 @@ while IFS= read -r SKILL_NAME; do
       else
         deploy_symlink "$SOURCE_PATH" "$DEST"
       fi
-      write_marker "$DEST" "$MODE" "$SOURCE_PATH" "$SKILL_NAME"
+      write_marker "$DEST" "$MODE" "$SOURCE_PATH" "$ENTRY_NAME"
       ok "$SKILL_NAME: created ($MODE)"
       ;;
     update|replace-mode)
-      atomic_replace "$SOURCE_PATH" "$DEST" "$MODE" "$SKILL_NAME"
+      atomic_replace "$SOURCE_PATH" "$DEST" "$MODE" "$ENTRY_NAME"
       ok "$SKILL_NAME: updated ($action -> $MODE)"
       ;;
   esac

@@ -50,7 +50,7 @@ Add this flake as an input and declare your skills:
               ui-patterns = {
                 source = community-skills;
                 subdir = "patterns/ui";
-                targetDir = ".claude/skills"; # Override: different target dir
+                targetDirs = [".agents/skills" ".claude/skills"]; # Deploy to multiple targets
               };
             };
           };
@@ -105,6 +105,7 @@ Compatibility note: if you previously used `"${skills-deployer.lib.mkDeploySkill
 | `subdir` | `String` | Yes | -- | Relative subdirectory within source; must not contain `..` or start with `/` |
 | `mode` | `"symlink"` or `"copy"` | No | Uses `defaultMode` | Per-skill mode override |
 | `targetDir` | `String` | No | Uses `defaultTargetDir` | Per-skill target directory override |
+| `targetDirs` | `List<String>` | No | `null` | Deploy to multiple directories; mutually exclusive with `targetDir` |
 
 ## Deployment Modes
 
@@ -116,7 +117,45 @@ Individual files are symlinked from the Nix store into the target directory. The
 
 Files are copied from the Nix store into the target directory. The skill is fully independent of the Nix store after deployment and can be locally edited.
 
-Use `copy` for skills you want to customize locally. Use `symlink` for shared/immutable skills where you want to save disk space and ensure consistency.
+ Use `copy` for skills you want to customize locally. Use `symlink` for shared/immutable skills where you want to save disk space and ensure consistency.
+
+## Multi-Target Deployment
+
+Deploy a single skill to multiple directories with `targetDirs`:
+
+```nix
+skills = {
+  code-review = {
+    source = my-skills-repo;
+    subdir = "skills/code-review";
+    targetDirs = [".agents/skills" ".claude/skills"];
+  };
+};
+```
+
+This deploys `code-review` to both `.agents/skills/code-review/` and `.claude/skills/code-review/`. Each target is tracked independently — adding or removing a directory from the list only affects that specific target.
+
+`targetDirs` and `targetDir` are mutually exclusive. For per-target customization (different modes or names), declare separate skill entries:
+
+```nix
+skills = {
+  code-review-agents = {
+    source = my-skills-repo;
+    subdir = "skills/code-review";
+    mode = "symlink";
+    targetDir = ".agents/skills";
+  };
+  code-review-claude = {
+    source = my-skills-repo;
+    subdir = "skills/code-review";
+    mode = "copy";
+    targetDir = ".claude/skills";
+  };
+};
+```
+
+> **Note on manifest internals**: When `targetDirs` is used, manifest entries are keyed as `<name>@@<targetDir>`. The Bash script uses the entry's `name` field (not the manifest key) to determine the deployment destination directory. Manually-crafted manifests with `@@` keys but different `name` values will deploy to the `name` location, not the location implied by the key.
+
 
 ## Marker Files
 

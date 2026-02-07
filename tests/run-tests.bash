@@ -816,6 +816,766 @@ EOF
 }
 
 # ================================================================
+# T25: multi_target_basic
+# ================================================================
+test_T25_multi_target_basic() {
+  local workdir
+  workdir=$(mktemp -d)
+  trap 'rm -rf "$workdir"' RETURN
+
+  touch "$workdir/flake.nix"
+  cp -R "$FIXTURES_DIR/valid-skill/sub-a" "$workdir/source-skill"
+
+  cat > "$workdir/manifest.json" <<EOF
+{
+  "my-skill@@.agents/skills": {
+    "name": "my-skill",
+    "mode": "copy",
+    "subdir": "sub-a",
+    "targetDir": ".agents/skills",
+    "sourcePath": "$workdir/source-skill"
+  },
+  "my-skill@@.claude/skills": {
+    "name": "my-skill",
+    "mode": "copy",
+    "subdir": "sub-a",
+    "targetDir": ".claude/skills",
+    "sourcePath": "$workdir/source-skill"
+  }
+}
+EOF
+
+  local exit_code=0
+  run_deploy_capture "$workdir" "$workdir/manifest.json" > /dev/null || exit_code=$?
+
+  assert_eq "$exit_code" 0 "exit code"
+  assert_file_exists "$workdir/.agents/skills/my-skill/SKILL.md"
+  assert_file_exists "$workdir/.claude/skills/my-skill/SKILL.md"
+  assert_file_exists "$workdir/.agents/skills/my-skill/$MARKER_FILENAME"
+  assert_file_exists "$workdir/.claude/skills/my-skill/$MARKER_FILENAME"
+}
+
+# ================================================================
+# T26: multi_target_idempotent
+# ================================================================
+test_T26_multi_target_idempotent() {
+  local workdir
+  workdir=$(mktemp -d)
+  trap 'rm -rf "$workdir"' RETURN
+
+  touch "$workdir/flake.nix"
+  cp -R "$FIXTURES_DIR/valid-skill/sub-a" "$workdir/source-skill"
+
+  cat > "$workdir/manifest.json" <<EOF
+{
+  "my-skill@@.agents/skills": {
+    "name": "my-skill",
+    "mode": "copy",
+    "subdir": "sub-a",
+    "targetDir": ".agents/skills",
+    "sourcePath": "$workdir/source-skill"
+  },
+  "my-skill@@.claude/skills": {
+    "name": "my-skill",
+    "mode": "copy",
+    "subdir": "sub-a",
+    "targetDir": ".claude/skills",
+    "sourcePath": "$workdir/source-skill"
+  }
+}
+EOF
+
+  run_deploy_capture "$workdir" "$workdir/manifest.json" > /dev/null
+  local output exit_code=0
+  output=$(run_deploy_capture "$workdir" "$workdir/manifest.json") || exit_code=$?
+
+  assert_eq "$exit_code" 0 "exit code"
+  assert_contains "$output" "0 skill(s) deployed" "nothing deployed on rerun"
+}
+
+# ================================================================
+# T27: multi_target_incremental_add
+# ================================================================
+test_T27_multi_target_incremental_add() {
+  local workdir
+  workdir=$(mktemp -d)
+  trap 'rm -rf "$workdir"' RETURN
+
+  touch "$workdir/flake.nix"
+  cp -R "$FIXTURES_DIR/valid-skill/sub-a" "$workdir/source-skill"
+
+  # First: deploy to two dirs
+  cat > "$workdir/manifest.json" <<EOF
+{
+  "my-skill@@.agents/skills": {
+    "name": "my-skill",
+    "mode": "copy",
+    "subdir": "sub-a",
+    "targetDir": ".agents/skills",
+    "sourcePath": "$workdir/source-skill"
+  },
+  "my-skill@@.claude/skills": {
+    "name": "my-skill",
+    "mode": "copy",
+    "subdir": "sub-a",
+    "targetDir": ".claude/skills",
+    "sourcePath": "$workdir/source-skill"
+  }
+}
+EOF
+  run_deploy_capture "$workdir" "$workdir/manifest.json" > /dev/null
+
+  # Second: add a third target dir
+  cat > "$workdir/manifest.json" <<EOF
+{
+  "my-skill@@.agents/skills": {
+    "name": "my-skill",
+    "mode": "copy",
+    "subdir": "sub-a",
+    "targetDir": ".agents/skills",
+    "sourcePath": "$workdir/source-skill"
+  },
+  "my-skill@@.claude/skills": {
+    "name": "my-skill",
+    "mode": "copy",
+    "subdir": "sub-a",
+    "targetDir": ".claude/skills",
+    "sourcePath": "$workdir/source-skill"
+  },
+  "my-skill@@.opencode/skills": {
+    "name": "my-skill",
+    "mode": "copy",
+    "subdir": "sub-a",
+    "targetDir": ".opencode/skills",
+    "sourcePath": "$workdir/source-skill"
+  }
+}
+EOF
+
+  local output exit_code=0
+  output=$(run_deploy_capture "$workdir" "$workdir/manifest.json") || exit_code=$?
+
+  assert_eq "$exit_code" 0 "exit code"
+  assert_contains "$output" "1 skill(s) deployed, 2 skipped" "only new target deployed"
+  assert_file_exists "$workdir/.opencode/skills/my-skill/SKILL.md"
+}
+
+# ================================================================
+# T28: multi_target_dry_run
+# ================================================================
+test_T28_multi_target_dry_run() {
+  local workdir
+  workdir=$(mktemp -d)
+  trap 'rm -rf "$workdir"' RETURN
+
+  touch "$workdir/flake.nix"
+  cp -R "$FIXTURES_DIR/valid-skill/sub-a" "$workdir/source-skill"
+
+  cat > "$workdir/manifest.json" <<EOF
+{
+  "my-skill@@.agents/skills": {
+    "name": "my-skill",
+    "mode": "symlink",
+    "subdir": "sub-a",
+    "targetDir": ".agents/skills",
+    "sourcePath": "$workdir/source-skill"
+  },
+  "my-skill@@.claude/skills": {
+    "name": "my-skill",
+    "mode": "symlink",
+    "subdir": "sub-a",
+    "targetDir": ".claude/skills",
+    "sourcePath": "$workdir/source-skill"
+  }
+}
+EOF
+
+  local output exit_code=0
+  output=$(run_deploy_capture "$workdir" "$workdir/manifest.json" --dry-run) || exit_code=$?
+
+  assert_eq "$exit_code" 1 "exit code should be 1 (changes pending)"
+  assert_contains "$output" "2 change(s) would be applied" "two targets pending"
+  # Verify no files created
+  assert_not_exists "$workdir/.agents/skills/my-skill"
+  assert_not_exists "$workdir/.claude/skills/my-skill"
+}
+
+# ================================================================
+# T29: multi_target_mixed_with_single
+# ================================================================
+test_T29_multi_target_mixed_with_single() {
+  local workdir
+  workdir=$(mktemp -d)
+  trap 'rm -rf "$workdir"' RETURN
+
+  touch "$workdir/flake.nix"
+  cp -R "$FIXTURES_DIR/valid-skill/sub-a" "$workdir/source-a"
+  cp -R "$FIXTURES_DIR/valid-skill/sub-b" "$workdir/source-b"
+
+  cat > "$workdir/manifest.json" <<EOF
+{
+  "multi-skill@@.agents/skills": {
+    "name": "multi-skill",
+    "mode": "copy",
+    "subdir": "sub-a",
+    "targetDir": ".agents/skills",
+    "sourcePath": "$workdir/source-a"
+  },
+  "multi-skill@@.claude/skills": {
+    "name": "multi-skill",
+    "mode": "copy",
+    "subdir": "sub-a",
+    "targetDir": ".claude/skills",
+    "sourcePath": "$workdir/source-a"
+  },
+  "single-skill": {
+    "name": "single-skill",
+    "mode": "symlink",
+    "subdir": "sub-b",
+    "targetDir": ".agents/skills",
+    "sourcePath": "$workdir/source-b"
+  }
+}
+EOF
+
+  local exit_code=0
+  run_deploy_capture "$workdir" "$workdir/manifest.json" > /dev/null || exit_code=$?
+
+  assert_eq "$exit_code" 0 "exit code"
+  assert_file_exists "$workdir/.agents/skills/multi-skill/SKILL.md"
+  assert_file_exists "$workdir/.claude/skills/multi-skill/SKILL.md"
+  assert_file_exists "$workdir/.agents/skills/single-skill/SKILL.md"
+  assert_not_symlink "$workdir/.agents/skills/multi-skill/SKILL.md"
+  assert_symlink "$workdir/.agents/skills/single-skill/SKILL.md"
+}
+
+# ================================================================
+# T30: multi_target_marker_name
+# ================================================================
+test_T30_multi_target_marker_name() {
+  local workdir
+  workdir=$(mktemp -d)
+  trap 'rm -rf "$workdir"' RETURN
+
+  touch "$workdir/flake.nix"
+  cp -R "$FIXTURES_DIR/valid-skill/sub-a" "$workdir/source-skill"
+
+  cat > "$workdir/manifest.json" <<EOF
+{
+  "my-skill@@.agents/skills": {
+    "name": "my-skill",
+    "mode": "copy",
+    "subdir": "sub-a",
+    "targetDir": ".agents/skills",
+    "sourcePath": "$workdir/source-skill"
+  },
+  "my-skill@@.claude/skills": {
+    "name": "my-skill",
+    "mode": "copy",
+    "subdir": "sub-a",
+    "targetDir": ".claude/skills",
+    "sourcePath": "$workdir/source-skill"
+  }
+}
+EOF
+
+  run_deploy_capture "$workdir" "$workdir/manifest.json" > /dev/null
+
+  local marker_name_agents marker_name_claude
+  marker_name_agents=$(jq -r '.skillName' "$workdir/.agents/skills/my-skill/$MARKER_FILENAME")
+  marker_name_claude=$(jq -r '.skillName' "$workdir/.claude/skills/my-skill/$MARKER_FILENAME")
+
+  assert_eq "$marker_name_agents" "my-skill" "agents marker skillName"
+  assert_eq "$marker_name_claude" "my-skill" "claude marker skillName"
+}
+
+# ================================================================
+# T31: nix_targetdirs_mutual_exclusion
+# ================================================================
+test_T31_nix_targetdirs_mutual_exclusion() {
+  local exit_code=0
+  local output
+  output=$(nix eval --impure --raw --expr '
+    let
+      pkgs = import <nixpkgs> {};
+      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
+      drv = mkDeploySkills {
+        inherit pkgs;
+        skills = {
+          bad-skill = {
+            source = ./. ;
+            subdir = "tests/fixtures/valid-skill/sub-a";
+            targetDir = ".agents/skills";
+            targetDirs = [".agents/skills" ".claude/skills"];
+          };
+        };
+      };
+    in builtins.toJSON drv.drvAttrs
+  ' 2>&1) || exit_code=$?
+
+  if [[ "$exit_code" -eq 0 ]]; then
+    printf "    ASSERT FAILED: nix eval should have failed for mutual exclusion\n" >&2
+    return 1
+  fi
+  assert_contains "$output" "both" "should mention both targetDir and targetDirs"
+}
+
+# ================================================================
+# T31b: nix_targetdirs_empty
+# ================================================================
+test_T31b_nix_targetdirs_empty() {
+  local exit_code=0
+  local output
+  output=$(nix eval --impure --raw --expr '
+    let
+      pkgs = import <nixpkgs> {};
+      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
+      drv = mkDeploySkills {
+        inherit pkgs;
+        skills = {
+          bad-skill = {
+            source = ./. ;
+            subdir = "tests/fixtures/valid-skill/sub-a";
+            targetDirs = [];
+          };
+        };
+      };
+    in builtins.toJSON drv.drvAttrs
+  ' 2>&1) || exit_code=$?
+
+  if [[ "$exit_code" -eq 0 ]]; then
+    printf "    ASSERT FAILED: nix eval should have failed for empty targetDirs\n" >&2
+    return 1
+  fi
+  assert_contains "$output" "empty" "should mention empty targetDirs"
+}
+
+# ================================================================
+# T31c: nix_targetdirs_absolute_path
+# ================================================================
+test_T31c_nix_targetdirs_absolute_path() {
+  local exit_code=0
+  local output
+  output=$(nix eval --impure --raw --expr '
+    let
+      pkgs = import <nixpkgs> {};
+      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
+      drv = mkDeploySkills {
+        inherit pkgs;
+        skills = {
+          bad-skill = {
+            source = ./. ;
+            subdir = "tests/fixtures/valid-skill/sub-a";
+            targetDirs = ["/etc/skills"];
+          };
+        };
+      };
+    in builtins.toJSON drv.drvAttrs
+  ' 2>&1) || exit_code=$?
+
+  if [[ "$exit_code" -eq 0 ]]; then
+    printf "    ASSERT FAILED: nix eval should have failed for absolute targetDirs entry\n" >&2
+    return 1
+  fi
+  assert_contains "$output" "must be relative" "should mention must be relative"
+}
+
+# ================================================================
+# T31d: nix_targetdirs_dotdot
+# ================================================================
+test_T31d_nix_targetdirs_dotdot() {
+  local exit_code=0
+  local output
+  output=$(nix eval --impure --raw --expr '
+    let
+      pkgs = import <nixpkgs> {};
+      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
+      drv = mkDeploySkills {
+        inherit pkgs;
+        skills = {
+          bad-skill = {
+            source = ./. ;
+            subdir = "tests/fixtures/valid-skill/sub-a";
+            targetDirs = ["../escape/skills"];
+          };
+        };
+      };
+    in builtins.toJSON drv.drvAttrs
+  ' 2>&1) || exit_code=$?
+
+  if [[ "$exit_code" -eq 0 ]]; then
+    printf "    ASSERT FAILED: nix eval should have failed for targetDirs entry with ..\n" >&2
+    return 1
+  fi
+  assert_contains "$output" "forbidden" "should mention forbidden"
+}
+
+# ================================================================
+# T32: nix_targetdirs_expansion
+# ================================================================
+test_T32_nix_targetdirs_expansion() {
+  local output exit_code=0
+  output=$(nix eval --impure --json --expr '
+    let
+      pkgs = import <nixpkgs> {};
+      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
+      drv = mkDeploySkills {
+        inherit pkgs;
+        skills = {
+          my-skill = {
+            source = '"$REPO_ROOT"';
+            subdir = "tests/fixtures/valid-skill/sub-a";
+            targetDirs = [".agents/skills" ".claude/skills"];
+          };
+        };
+      };
+      manifest = builtins.fromJSON (builtins.readFile "${drv.passthru.manifestPath}");
+    in manifest
+  ' 2>&1) || exit_code=$?
+
+  assert_eq "$exit_code" 0 "nix eval should succeed for targetDirs"
+
+  # Verify manifest has correct @@-keyed entries
+  local key1_exists key2_exists
+  key1_exists=$(echo "$output" | jq 'has("my-skill@@.agents/skills")')
+  key2_exists=$(echo "$output" | jq 'has("my-skill@@.claude/skills")')
+  assert_eq "$key1_exists" "true" "manifest should have my-skill@@.agents/skills key"
+  assert_eq "$key2_exists" "true" "manifest should have my-skill@@.claude/skills key"
+
+  # Verify entry fields for agents target
+  local agents_name agents_targetdir agents_sourcepath
+  agents_name=$(echo "$output" | jq -r '.["my-skill@@.agents/skills"].name')
+  agents_targetdir=$(echo "$output" | jq -r '.["my-skill@@.agents/skills"].targetDir')
+  assert_eq "$agents_name" "my-skill" "agents entry name"
+  assert_eq "$agents_targetdir" ".agents/skills" "agents entry targetDir"
+
+  # Verify entry fields for claude target
+  local claude_name claude_targetdir
+  claude_name=$(echo "$output" | jq -r '.["my-skill@@.claude/skills"].name')
+  claude_targetdir=$(echo "$output" | jq -r '.["my-skill@@.claude/skills"].targetDir')
+  assert_eq "$claude_name" "my-skill" "claude entry name"
+  assert_eq "$claude_targetdir" ".claude/skills" "claude entry targetDir"
+
+  # Verify both entries have sourcePath set
+  local agents_source claude_source
+  agents_source=$(echo "$output" | jq -r '.["my-skill@@.agents/skills"].sourcePath')
+  claude_source=$(echo "$output" | jq -r '.["my-skill@@.claude/skills"].sourcePath')
+  assert_contains "$agents_source" "tests/fixtures/valid-skill/sub-a" "agents sourcePath"
+  assert_contains "$claude_source" "tests/fixtures/valid-skill/sub-a" "claude sourcePath"
+}
+
+# ================================================================
+# T33: multi_target_single_entry
+# ================================================================
+test_T33_multi_target_single_entry() {
+  local workdir
+  workdir=$(mktemp -d)
+  trap 'rm -rf "$workdir"' RETURN
+
+  touch "$workdir/flake.nix"
+  cp -R "$FIXTURES_DIR/valid-skill/sub-a" "$workdir/source-skill"
+
+  # Simulates Nix expansion of targetDirs = [".agents/skills"] (single element, still uses @@)
+  cat > "$workdir/manifest.json" <<EOF
+{
+  "my-skill@@.agents/skills": {
+    "name": "my-skill",
+    "mode": "copy",
+    "subdir": "sub-a",
+    "targetDir": ".agents/skills",
+    "sourcePath": "$workdir/source-skill"
+  }
+}
+EOF
+
+  local exit_code=0
+  run_deploy_capture "$workdir" "$workdir/manifest.json" > /dev/null || exit_code=$?
+
+  assert_eq "$exit_code" 0 "exit code"
+  # Verify skill deployed using entry name, not manifest key
+  assert_file_exists "$workdir/.agents/skills/my-skill/SKILL.md"
+  assert_file_exists "$workdir/.agents/skills/my-skill/$MARKER_FILENAME"
+  # Verify NO directory with @@-keyed name was created
+  assert_not_exists "$workdir/.agents/skills/my-skill@@.agents/skills"
+
+  local marker_name
+  marker_name=$(jq -r '.skillName' "$workdir/.agents/skills/my-skill/$MARKER_FILENAME")
+  assert_eq "$marker_name" "my-skill" "marker skillName should be plain name"
+}
+
+# ================================================================
+# T34: multi_target_mode_drift
+# ================================================================
+test_T34_multi_target_mode_drift() {
+  local workdir
+  workdir=$(mktemp -d)
+  trap 'rm -rf "$workdir"' RETURN
+
+  touch "$workdir/flake.nix"
+  cp -R "$FIXTURES_DIR/valid-skill/sub-a" "$workdir/source-skill"
+
+  # Deploy both as copy
+  cat > "$workdir/manifest.json" <<EOF
+{
+  "my-skill@@.agents/skills": {
+    "name": "my-skill",
+    "mode": "copy",
+    "subdir": "sub-a",
+    "targetDir": ".agents/skills",
+    "sourcePath": "$workdir/source-skill"
+  },
+  "my-skill@@.claude/skills": {
+    "name": "my-skill",
+    "mode": "copy",
+    "subdir": "sub-a",
+    "targetDir": ".claude/skills",
+    "sourcePath": "$workdir/source-skill"
+  }
+}
+EOF
+  run_deploy_capture "$workdir" "$workdir/manifest.json" > /dev/null
+
+  # Record claude marker's deployedAt before second run
+  local claude_deployed_at_before
+  claude_deployed_at_before=$(jq -r '.deployedAt' "$workdir/.claude/skills/my-skill/$MARKER_FILENAME")
+
+  # Change agents to symlink, keep claude as copy
+  cat > "$workdir/manifest.json" <<EOF
+{
+  "my-skill@@.agents/skills": {
+    "name": "my-skill",
+    "mode": "symlink",
+    "subdir": "sub-a",
+    "targetDir": ".agents/skills",
+    "sourcePath": "$workdir/source-skill"
+  },
+  "my-skill@@.claude/skills": {
+    "name": "my-skill",
+    "mode": "copy",
+    "subdir": "sub-a",
+    "targetDir": ".claude/skills",
+    "sourcePath": "$workdir/source-skill"
+  }
+}
+EOF
+
+  local output exit_code=0
+  output=$(run_deploy_capture "$workdir" "$workdir/manifest.json") || exit_code=$?
+
+  assert_eq "$exit_code" 0 "exit code"
+  # Agents should now be symlink
+  assert_symlink "$workdir/.agents/skills/my-skill/SKILL.md"
+  local agents_mode
+  agents_mode=$(jq -r '.mode' "$workdir/.agents/skills/my-skill/$MARKER_FILENAME")
+  assert_eq "$agents_mode" "symlink" "agents mode should be symlink"
+
+  # Claude should still be copy, unchanged
+  assert_not_symlink "$workdir/.claude/skills/my-skill/SKILL.md"
+  local claude_mode claude_deployed_at_after
+  claude_mode=$(jq -r '.mode' "$workdir/.claude/skills/my-skill/$MARKER_FILENAME")
+  claude_deployed_at_after=$(jq -r '.deployedAt' "$workdir/.claude/skills/my-skill/$MARKER_FILENAME")
+  assert_eq "$claude_mode" "copy" "claude mode should still be copy"
+  assert_eq "$claude_deployed_at_after" "$claude_deployed_at_before" "claude should not have been re-deployed"
+
+  # Output should show 1 deployed, 1 skipped
+  assert_contains "$output" "1 skill(s) deployed, 1 skipped" "one updated, one skipped"
+}
+
+# ================================================================
+# T35: multi_target_source_drift
+# ================================================================
+test_T35_multi_target_source_drift() {
+  local workdir
+  workdir=$(mktemp -d)
+  trap 'rm -rf "$workdir"' RETURN
+
+  touch "$workdir/flake.nix"
+  cp -R "$FIXTURES_DIR/valid-skill/sub-a" "$workdir/source-v1"
+
+  # Deploy v1 to both
+  cat > "$workdir/manifest.json" <<EOF
+{
+  "my-skill@@.agents/skills": {
+    "name": "my-skill",
+    "mode": "copy",
+    "subdir": "sub-a",
+    "targetDir": ".agents/skills",
+    "sourcePath": "$workdir/source-v1"
+  },
+  "my-skill@@.claude/skills": {
+    "name": "my-skill",
+    "mode": "copy",
+    "subdir": "sub-a",
+    "targetDir": ".claude/skills",
+    "sourcePath": "$workdir/source-v1"
+  }
+}
+EOF
+  run_deploy_capture "$workdir" "$workdir/manifest.json" > /dev/null
+
+  # Create v2 source
+  cp -R "$FIXTURES_DIR/valid-skill/sub-a" "$workdir/source-v2"
+  echo "v2 content" > "$workdir/source-v2/prompt.txt"
+
+  # Deploy v2 to both
+  cat > "$workdir/manifest.json" <<EOF
+{
+  "my-skill@@.agents/skills": {
+    "name": "my-skill",
+    "mode": "copy",
+    "subdir": "sub-a",
+    "targetDir": ".agents/skills",
+    "sourcePath": "$workdir/source-v2"
+  },
+  "my-skill@@.claude/skills": {
+    "name": "my-skill",
+    "mode": "copy",
+    "subdir": "sub-a",
+    "targetDir": ".claude/skills",
+    "sourcePath": "$workdir/source-v2"
+  }
+}
+EOF
+
+  local output exit_code=0
+  output=$(run_deploy_capture "$workdir" "$workdir/manifest.json") || exit_code=$?
+
+  assert_eq "$exit_code" 0 "exit code"
+  assert_contains "$output" "2 skill(s) deployed, 0 skipped" "both targets updated"
+
+  # Verify both markers point to v2
+  local agents_source claude_source
+  agents_source=$(jq -r '.sourcePath' "$workdir/.agents/skills/my-skill/$MARKER_FILENAME")
+  claude_source=$(jq -r '.sourcePath' "$workdir/.claude/skills/my-skill/$MARKER_FILENAME")
+  assert_eq "$agents_source" "$workdir/source-v2" "agents source updated to v2"
+  assert_eq "$claude_source" "$workdir/source-v2" "claude source updated to v2"
+}
+
+# ================================================================
+# T36: nix_skill_name_with_at_signs
+# ================================================================
+test_T36_nix_skill_name_with_at_signs() {
+  local exit_code=0
+  local output
+  output=$(nix eval --impure --raw --expr '
+    let
+      pkgs = import <nixpkgs> {};
+      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
+      drv = mkDeploySkills {
+        inherit pkgs;
+        skills = {
+          bad-skill@@name = {
+            source = ./. ;
+            subdir = "tests/fixtures/valid-skill/sub-a";
+          };
+        };
+      };
+    in builtins.toJSON drv.drvAttrs
+  ' 2>&1) || exit_code=$?
+
+  if [[ "$exit_code" -eq 0 ]]; then
+    printf "    ASSERT FAILED: nix eval should have failed for skill name containing @@\n" >&2
+    return 1
+  fi
+  assert_contains "$output" "@@" "should mention @@ in error"
+}
+
+# ================================================================
+# T37: nix_manifest_key_collision
+# ================================================================
+test_T37_nix_manifest_key_collision() {
+  local exit_code=0
+  local output
+  output=$(nix eval --impure --raw --expr '
+    let
+      pkgs = import <nixpkgs> {};
+      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
+      drv = mkDeploySkills {
+        inherit pkgs;
+        skills = {
+          foo = {
+            source = ./. ;
+            subdir = "tests/fixtures/valid-skill/sub-a";
+            targetDir = ".agents/skills";
+          };
+          foo@@.agents/skills = {
+            source = ./. ;
+            subdir = "tests/fixtures/valid-skill/sub-a";
+            targetDir = ".claude/skills";
+          };
+        };
+      };
+    in builtins.toJSON drv.drvAttrs
+  ' 2>&1) || exit_code=$?
+
+  if [[ "$exit_code" -eq 0 ]]; then
+    printf "    ASSERT FAILED: nix eval should have failed for manifest key collision\n" >&2
+    return 1
+  fi
+  assert_contains "$output" "Collision detected" "should mention Collision detected"
+}
+
+# ================================================================
+# T38: nix_targetdirs_empty_element
+# ================================================================
+test_T38_nix_targetdirs_empty_element() {
+  local exit_code=0
+  local output
+  output=$(nix eval --impure --raw --expr '
+    let
+      pkgs = import <nixpkgs> {};
+      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
+      drv = mkDeploySkills {
+        inherit pkgs;
+        skills = {
+          bad-skill = {
+            source = ./. ;
+            subdir = "tests/fixtures/valid-skill/sub-a";
+            targetDirs = [""];
+          };
+        };
+      };
+    in builtins.toJSON drv.drvAttrs
+  ' 2>&1) || exit_code=$?
+
+  if [[ "$exit_code" -eq 0 ]]; then
+    printf "    ASSERT FAILED: nix eval should have failed for empty targetDirs element\n" >&2
+    return 1
+  fi
+  assert_contains "$output" "cannot be empty" "should mention cannot be empty"
+}
+
+# ================================================================
+# T39: nix_targetdirs_path_normalization
+# ================================================================
+test_T39_nix_targetdirs_path_normalization() {
+  local output exit_code=0
+  output=$(nix eval --impure --raw --expr '
+    let
+      pkgs = import <nixpkgs> {};
+      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
+      drv = mkDeploySkills {
+        inherit pkgs;
+        skills = {
+          my-skill = {
+            source = '"$REPO_ROOT"';
+            subdir = "tests/fixtures/valid-skill/sub-a";
+            targetDirs = [".agents/skills" "./.agents/skills" ".agents/skills/"];
+          };
+        };
+      };
+      manifest = builtins.fromJSON (builtins.readFile "${drv.passthru.manifestPath}");
+    in builtins.attrNames manifest
+  ' 2>&1) || exit_code=$?
+
+  assert_eq "$exit_code" 0 "nix eval should detect duplicates after normalization"
+  # Should only have one entry since all paths normalize to the same value
+  local count
+  count=$(echo "$output" | wc -l | tr -d ' ')
+  assert_eq "$count" "1" "should have only one manifest entry after normalization, got $count"
+}
+
+# ================================================================
 # Run all tests
 # ================================================================
 MARKER_FILENAME=".skills-deployer-managed"
@@ -852,6 +1612,39 @@ run_test test_T20_no_skills_configured
 run_test test_T21_symlink_hidden_files
 run_test test_T22_atomic_replace_no_partial
 run_test test_T23_symlink_no_dotfiles
+run_test test_T25_multi_target_basic
+run_test test_T26_multi_target_idempotent
+run_test test_T27_multi_target_incremental_add
+run_test test_T28_multi_target_dry_run
+run_test test_T29_multi_target_mixed_with_single
+run_test test_T30_multi_target_marker_name
+if [[ -n "$IN_NIX_SANDBOX" || "$NIX_EVAL_AVAILABLE" != "true" ]]; then
+  skip_test test_T31_nix_targetdirs_mutual_exclusion "requires nix eval --impure"
+  skip_test test_T31b_nix_targetdirs_empty "requires nix eval --impure"
+  skip_test test_T31c_nix_targetdirs_absolute_path "requires nix eval --impure"
+  skip_test test_T31d_nix_targetdirs_dotdot "requires nix eval --impure"
+  skip_test test_T32_nix_targetdirs_expansion "requires nix eval --impure"
+else
+  run_test test_T31_nix_targetdirs_mutual_exclusion
+  run_test test_T31b_nix_targetdirs_empty
+  run_test test_T31c_nix_targetdirs_absolute_path
+  run_test test_T31d_nix_targetdirs_dotdot
+  run_test test_T32_nix_targetdirs_expansion
+fi
+run_test test_T33_multi_target_single_entry
+run_test test_T34_multi_target_mode_drift
+run_test test_T35_multi_target_source_drift
+if [[ -n "$IN_NIX_SANDBOX" || "$NIX_EVAL_AVAILABLE" != "true" ]]; then
+  skip_test test_T36_nix_skill_name_with_at_signs "requires nix eval --impure"
+  skip_test test_T37_nix_manifest_key_collision "requires nix eval --impure"
+  skip_test test_T38_nix_targetdirs_empty_element "requires nix eval --impure"
+  skip_test test_T39_nix_targetdirs_path_normalization "requires nix eval --impure"
+else
+  run_test test_T36_nix_skill_name_with_at_signs
+  run_test test_T37_nix_manifest_key_collision
+  run_test test_T38_nix_targetdirs_empty_element
+  run_test test_T39_nix_targetdirs_path_normalization
+fi
 
 echo ""
 echo "1..$TOTAL"

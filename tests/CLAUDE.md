@@ -16,6 +16,11 @@ or directly: `bash tests/run-tests.bash` (requires `jq` on PATH).
 - `fixtures/empty-skill/` — No SKILL.md (used for validation failure tests).
 - Never modify existing fixtures without updating all tests that reference them.
 
+## Multi-Target Tests
+
+- Multi-target tests (T25–T30, T33–T35) use hand-crafted manifests with `@@` keys to simulate Nix-side expansion.
+- Nix eval-time tests (T31, T31b–T31d, T32) validate `targetDirs` expansion, mutual exclusion, and path validation.
+
 ## Rules
 
 - **IMPORTANT**: Register every new test with `run_test test_TNN_...` at the bottom of the file.
