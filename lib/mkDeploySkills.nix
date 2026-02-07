@@ -28,63 +28,62 @@
 
   assertMode = name: mode:
     assert lib.assertMsg (builtins.elem mode validModes)
-    "skills-deployer: skill '${name}' has invalid mode '${mode}'. Must be one of: ${builtins.concatStringsSep ", " validModes}.";
-      mode;
+    "skills-deployer: skill '${name}' has invalid mode '${mode}'. Must be one of: ${builtins.concatStringsSep ", " validModes}."; mode;
 
   assertSubdir = name: subdir:
     assert lib.assertMsg (!(lib.hasPrefix "/" subdir))
     "skills-deployer: skill '${name}' subdir must be relative, got '${subdir}'.";
-      assert lib.assertMsg (!(lib.hasInfix ".." subdir))
-        "skills-deployer: skill '${name}' subdir contains '..', which is forbidden.";
-        subdir;
+    assert lib.assertMsg (!(lib.hasInfix ".." subdir))
+    "skills-deployer: skill '${name}' subdir contains '..', which is forbidden."; subdir;
 
   assertSkillNameValid = name:
     assert lib.assertMsg (!(lib.hasInfix "@@" name))
-      "skills-deployer: skill name '${name}' cannot contain '@@' (reserved for multi-target key generation).";
-      name;
+    "skills-deployer: skill name '${name}' cannot contain '@@' (reserved for multi-target key generation)."; name;
 
   assertTargetDirsMutualExclusion = name: spec:
     assert lib.assertMsg
-      (!((spec ? targetDir && spec.targetDir != null) && (spec ? targetDirs && spec.targetDirs != null)))
-      "skills-deployer: skill '${name}' sets both 'targetDir' and 'targetDirs'. Use one or the other.";
-      true;
+    (!((spec ? targetDir && spec.targetDir != null) && (spec ? targetDirs && spec.targetDirs != null)))
+    "skills-deployer: skill '${name}' sets both 'targetDir' and 'targetDirs'. Use one or the other."; true;
 
   assertTargetDirsNonEmpty = name: dirs:
     assert lib.assertMsg (builtins.length dirs > 0)
-      "skills-deployer: skill '${name}' has empty 'targetDirs' list. Provide at least one directory.";
-      dirs;
+    "skills-deployer: skill '${name}' has empty 'targetDirs' list. Provide at least one directory."; dirs;
 
-  assertTargetDirsNoDuplicates = name: dirs:
-    let
-      normalized = map normalizePath dirs;
-    in
-      assert lib.assertMsg (builtins.length normalized == builtins.length (lib.unique normalized))
-        "skills-deployer: skill '${name}' has duplicate entries in 'targetDirs'. Each target directory must be unique.";
-        dirs;
+  assertTargetDirsNoDuplicates = name: dirs: let
+    normalized = map normalizePath dirs;
+  in
+    assert lib.assertMsg (builtins.length normalized == builtins.length (lib.unique normalized))
+    "skills-deployer: skill '${name}' has duplicate entries in 'targetDirs'. Each target directory must be unique."; dirs;
 
   assertTargetDirRelative = name: dir:
     assert lib.assertMsg (builtins.stringLength dir > 0)
-      "skills-deployer: skill '${name}' targetDirs entry cannot be empty.";
-      assert lib.assertMsg (!(lib.hasPrefix "/" dir))
-      "skills-deployer: skill '${name}' targetDirs entry must be relative, got '${dir}'.";
-      assert lib.assertMsg (!(lib.hasInfix ".." dir))
-        "skills-deployer: skill '${name}' targetDirs entry contains '..', which is forbidden.";
-          dir;
+    "skills-deployer: skill '${name}' targetDirs entry cannot be empty.";
+    assert lib.assertMsg (!(lib.hasPrefix "/" dir))
+    "skills-deployer: skill '${name}' targetDirs entry must be relative, got '${dir}'.";
+    assert lib.assertMsg (!(lib.hasInfix ".." dir))
+    "skills-deployer: skill '${name}' targetDirs entry contains '..', which is forbidden."; dir;
 
   # Normalize directory path: trim trailing slashes and leading ./ (for deduplication comparison)
-  normalizePath = path:
-    let
-      trimmedSlashes = lib.removeSuffix "/" (lib.removeSuffix "/" path);
-      trimmedDot = if lib.hasPrefix "./" trimmedSlashes then builtins.substring 2 (builtins.stringLength trimmedSlashes) trimmedSlashes else trimmedSlashes;
-    in trimmedDot;
+  normalizePath = path: let
+    trimmedSlashes = lib.removeSuffix "/" (lib.removeSuffix "/" path);
+    trimmedDot =
+      if lib.hasPrefix "./" trimmedSlashes
+      then builtins.substring 2 (builtins.stringLength trimmedSlashes) trimmedSlashes
+      else trimmedSlashes;
+  in
+    trimmedDot;
 
   # --- Build manifest entries ---
   # Expand a single SkillSpec into one or more manifest entries.
   # Returns: AttrSet<ManifestKey, ManifestEntry>
   expandSkill = name: spec: let
-    _ = assertSkillNameValid name;
-    _ = assertTargetDirsMutualExclusion name spec;
-    mode = assertMode name (if (spec ? mode) && spec.mode != null then spec.mode else defaultMode);
+    checkSkillNameValid = assertSkillNameValid name;
+    checkTargetDirsMutualExclusion = assertTargetDirsMutualExclusion name spec;
+    mode = assertMode name (
+      if (spec ? mode) && spec.mode != null
+      then spec.mode
+      else defaultMode
+    );
     subdir = assertSubdir name spec.subdir;
     resolvedSource = "${spec.source}/${subdir}";
 
@@ -92,7 +91,13 @@
     targetDirsList =
       if hasTargetDirs
       then map (assertTargetDirRelative name) (assertTargetDirsNoDuplicates name (assertTargetDirsNonEmpty name spec.targetDirs))
-      else [ (if (spec ? targetDir) && spec.targetDir != null then spec.targetDir else defaultTargetDir) ];
+      else [
+        (
+          if (spec ? targetDir) && spec.targetDir != null
+          then spec.targetDir
+          else defaultTargetDir
+        )
+      ];
 
     mkEntry = dir: {
       inherit name mode subdir;
@@ -102,51 +107,50 @@
 
     # ALWAYS use @@-keyed format when targetDirs is used, even for single element.
     # Plain name keys are only used for targetDir (singular) or default.
-    mkKey = dir:
-      let
-        normalizedDir = normalizePath dir;
-      in
-        if hasTargetDirs
-        then "${name}@@${normalizedDir}"
-        else name;
+    mkKey = dir: let
+      normalizedDir = normalizePath dir;
+    in
+      if hasTargetDirs
+      then "${name}@@${normalizedDir}"
+      else name;
   in
     builtins.listToAttrs (map (dir: {
-      name = mkKey dir;
-      value = mkEntry dir;
-    }) targetDirsList);
+        name = mkKey dir;
+        value = mkEntry dir;
+      })
+      targetDirsList);
 
   # Merge with collision detection: ensure no two skills produce the same manifest key
-  manifestEntries =
-    let
-      mergeOne = acc: name: spec:
-        let
-          expanded = expandSkill name spec;
-          newKeys = builtins.attrNames expanded;
-        in
-          if builtins.any (key: acc ? key) newKeys
-          then throw ''
-            skills-deployer: skill '${name}' produces manifest key(s) that collide with existing entries.
-            Collision detected: ${builtins.concatStringsSep ", " (builtins.filter (key: acc ? key) newKeys)}.
-            Consider renaming the skill or avoiding '@@' in skill names.
-          ''
-          else acc // expanded;
+  manifestEntries = let
+    mergeOne = acc: name: spec: let
+      expanded = expandSkill name spec;
+      newKeys = builtins.attrNames expanded;
     in
-      lib.foldlAttrs mergeOne {} skills;
+      if builtins.any (key: acc ? key) newKeys
+      then
+        throw ''
+          skills-deployer: skill '${name}' produces manifest key(s) that collide with existing entries.
+          Collision detected: ${builtins.concatStringsSep ", " (builtins.filter (key: acc ? key) newKeys)}.
+          Consider renaming the skill or avoiding '@@' in skill names.
+        ''
+      else acc // expanded;
+  in
+    lib.foldlAttrs mergeOne {} skills;
 
   manifestJSON =
     pkgs.writeText "skills-manifest.json"
     (builtins.toJSON manifestEntries);
 
   deployScript = builtins.readFile ../scripts/deploy-skills.bash;
+in let
+  drv = pkgs.writeShellApplication {
+    name = "deploy-skills";
+    runtimeInputs = [pkgs.jq pkgs.coreutils];
+    text = ''
+      MANIFEST_PATH="${manifestJSON}"
+      ${deployScript}
+    '';
+  };
 in
-  let
-    drv = pkgs.writeShellApplication {
-      name = "deploy-skills";
-      runtimeInputs = [pkgs.jq pkgs.coreutils];
-      text = ''
-        MANIFEST_PATH="${manifestJSON}"
-        ${deployScript}
-      '';
-    };
-  in
-    drv // { passthru = { manifestPath = manifestJSON; }; }
+  drv // {passthru = {manifestPath = manifestJSON;};}
+
