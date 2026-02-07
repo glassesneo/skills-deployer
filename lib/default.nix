@@ -1,0 +1,3 @@
+{
+  mkDeploySkills = import ./mkDeploySkills.nix;
+}
