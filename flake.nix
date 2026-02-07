@@ -19,10 +19,7 @@
     lib.mkDeploySkills = import ./lib/mkDeploySkills.nix;
 
     # Self-test app (uses fixtures)
-    apps = eachSystem ({
-      system,
-      pkgs,
-    }: {
+    apps = eachSystem ({pkgs, ...}: {
       test = let
         src = self;
       in {
@@ -39,26 +36,21 @@
       };
     });
 
-    checks = eachSystem ({
-      system,
-      pkgs,
-    }: {
-      tests = pkgs.runCommand "skills-deployer-tests" {
-        nativeBuildInputs = [pkgs.jq pkgs.coreutils pkgs.bash pkgs.nix];
-        src = self;
-      } ''
-        export REPO_ROOT="$src"
-        # nix eval needs a writable home for cache
-        export HOME="$(mktemp -d)"
-        bash "$src/tests/run-tests.bash"
-        touch "$out"
-      '';
+    checks = eachSystem ({pkgs, ...}: {
+      tests =
+        pkgs.runCommand "skills-deployer-tests" {
+          nativeBuildInputs = [pkgs.jq pkgs.coreutils pkgs.bash pkgs.nix];
+          src = self;
+        } ''
+          export REPO_ROOT="$src"
+          # nix eval needs a writable home for cache
+          export HOME="$(mktemp -d)"
+          bash "$src/tests/run-tests.bash"
+          touch "$out"
+        '';
     });
 
-    devShells = eachSystem ({
-      system,
-      pkgs,
-    }: {
+    devShells = eachSystem ({pkgs, ...}: {
       default = pkgs.mkShell {
         packages = [pkgs.jq pkgs.shellcheck pkgs.bash];
       };
