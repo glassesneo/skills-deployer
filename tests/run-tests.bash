@@ -1576,6 +1576,68 @@ test_T39_nix_targetdirs_path_normalization() {
 }
 
 # ================================================================
+# T40: nix_targetdir_wrong_type
+# ================================================================
+test_T40_nix_targetdir_wrong_type() {
+  local exit_code=0
+  local output
+  output=$(nix eval --impure --raw --expr '
+    let
+      pkgs = import <nixpkgs> {};
+      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
+      drv = mkDeploySkills {
+        inherit pkgs;
+        skills = {
+          bad-skill = {
+            source = '"$REPO_ROOT"'/tests/fixtures/valid-skill/sub-a;
+            subdir = ".";
+            targetDir = [".agents/skills" ".claude/skills"];
+          };
+        };
+      };
+    in builtins.toJSON drv.drvAttrs
+  ' 2>&1) || exit_code=$?
+
+  if [[ "$exit_code" -eq 0 ]]; then
+    printf "    ASSERT FAILED: nix eval should have failed for targetDir with wrong type\n" >&2
+    return 1
+  fi
+  assert_contains "$output" "invalid type" "should mention invalid type"
+  assert_contains "$output" "targetDirs" "should suggest targetDirs (plural)"
+}
+
+# ================================================================
+# T41: nix_targetdirs_wrong_type
+# ================================================================
+test_T41_nix_targetdirs_wrong_type() {
+  local exit_code=0
+  local output
+  output=$(nix eval --impure --raw --expr '
+    let
+      pkgs = import <nixpkgs> {};
+      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
+      drv = mkDeploySkills {
+        inherit pkgs;
+        skills = {
+          bad-skill = {
+            source = '"$REPO_ROOT"'/tests/fixtures/valid-skill/sub-a;
+            subdir = ".";
+            targetDirs = ".agents/skills";  # String instead of list
+          };
+        };
+      };
+    in builtins.toJSON drv.drvAttrs
+  ' 2>&1) || exit_code=$?
+
+  if [[ "$exit_code" -eq 0 ]]; then
+    printf "    ASSERT FAILED: nix eval should have failed for targetDirs with wrong type\n" >&2
+    return 1
+  fi
+  assert_contains "$output" "invalid type" "should mention invalid type"
+  assert_contains "$output" "targetDir" "should suggest targetDir (singular)"
+}
+
+# ================================================================
 # Run all tests
 # ================================================================
 MARKER_FILENAME=".skills-deployer-managed"
@@ -1639,11 +1701,15 @@ if [[ -n "$IN_NIX_SANDBOX" || "$NIX_EVAL_AVAILABLE" != "true" ]]; then
   skip_test test_T37_nix_manifest_key_collision "requires nix eval --impure"
   skip_test test_T38_nix_targetdirs_empty_element "requires nix eval --impure"
   skip_test test_T39_nix_targetdirs_path_normalization "requires nix eval --impure"
+  skip_test test_T40_nix_targetdir_wrong_type "requires nix eval --impure"
+  skip_test test_T41_nix_targetdirs_wrong_type "requires nix eval --impure"
 else
   run_test test_T36_nix_skill_name_with_at_signs
   run_test test_T37_nix_manifest_key_collision
   run_test test_T38_nix_targetdirs_empty_element
   run_test test_T39_nix_targetdirs_path_normalization
+  run_test test_T40_nix_targetdir_wrong_type
+  run_test test_T41_nix_targetdirs_wrong_type
 fi
 
 echo ""

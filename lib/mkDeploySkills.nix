@@ -63,6 +63,14 @@
     assert lib.assertMsg (!(lib.hasInfix ".." dir))
     "skills-deployer: skill '${name}' targetDirs entry contains '..', which is forbidden."; dir;
 
+  assertTargetDirType = name: value:
+    assert lib.assertMsg (value == null || builtins.isString value)
+    "skills-deployer: skill '${name}' has 'targetDir' with invalid type. Expected string or null, got ${builtins.typeOf value}. If you meant to specify multiple target directories, use 'targetDirs' (plural) instead."; value;
+
+  assertTargetDirsType = name: value:
+    assert lib.assertMsg (value == null || builtins.isList value)
+    "skills-deployer: skill '${name}' has 'targetDirs' with invalid type. Expected list or null, got ${builtins.typeOf value}. If you meant to specify a single target directory, use 'targetDir' (singular) instead."; value;
+
   # Normalize directory path: trim trailing slashes and leading ./ (for deduplication comparison)
   normalizePath = path: let
     trimmedSlashes = lib.removeSuffix "/" (lib.removeSuffix "/" path);
@@ -79,6 +87,8 @@
   expandSkill = name: spec: let
     checkSkillNameValid = assertSkillNameValid name;
     checkTargetDirsMutualExclusion = assertTargetDirsMutualExclusion name spec;
+    checkTargetDirType = assertTargetDirType name (if spec ? targetDir then spec.targetDir else null);
+    checkTargetDirsType = assertTargetDirsType name (if spec ? targetDirs then spec.targetDirs else null);
     mode = assertMode name (
       if (spec ? mode) && spec.mode != null
       then spec.mode
@@ -99,6 +109,12 @@
         )
       ];
 
+    # Force evaluation of all validator bindings (Nix is lazy; seq ensures assertions fire)
+    _ = builtins.seq checkSkillNameValid (
+          builtins.seq checkTargetDirsMutualExclusion (
+            builtins.seq checkTargetDirType (
+                  builtins.seq checkTargetDirsType true)));
+
     mkEntry = dir: {
       inherit name mode subdir;
       targetDir = dir;
@@ -114,11 +130,11 @@
       then "${name}@@${normalizedDir}"
       else name;
   in
-    builtins.listToAttrs (map (dir: {
+    builtins.seq _ (builtins.listToAttrs (map (dir: {
         name = mkKey dir;
         value = mkEntry dir;
       })
-      targetDirsList);
+      targetDirsList));
 
   # Merge with collision detection: ensure no two skills produce the same manifest key
   manifestEntries = let
