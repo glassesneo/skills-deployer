@@ -94,8 +94,6 @@ mkDeploySkills pkgs {
 | `defaultMode` | `"symlink"` or `"copy"` | No | `"symlink"` | Default deployment mode |
 | `defaultTargetDir` | `String` | No | `".agents/skills"` | Default parent directory for skills |
 
-Compatibility note: if you previously used `"${skills-deployer.lib.mkDeploySkills { ... }}/bin/deploy-skills"`, migrate to `skills-deployer.lib.mkDeploySkills pkgs { ... }`.
-
 ### `SkillSpec` attributes
 
 | Attribute | Type | Required | Default | Description |
