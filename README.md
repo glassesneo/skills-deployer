@@ -22,8 +22,7 @@ Add this flake as an input and declare your skills:
 
   outputs = { self, nixpkgs, skills-deployer, my-skills-repo, community-skills, ... }:
     let
-      supportedSystems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
-      eachSystem = f: nixpkgs.lib.genAttrs supportedSystems (system: f {
+      eachSystem = f: nixpkgs.lib.genAttrs nixpkgs.lib.systems.flakeExposed (system: f {
         inherit system;
         pkgs = nixpkgs.legacyPackages.${system};
       });

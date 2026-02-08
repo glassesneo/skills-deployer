@@ -8,9 +8,8 @@
     nixpkgs,
     ...
   }: let
-    supportedSystems = ["x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin"];
     eachSystem = f:
-      nixpkgs.lib.genAttrs supportedSystems (system:
+      nixpkgs.lib.genAttrs nixpkgs.lib.systems.flakeExposed (system:
         f {
           inherit system;
           pkgs = nixpkgs.legacyPackages.${system};
