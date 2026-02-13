@@ -1,8 +1,10 @@
 # skills-deployer
 
-A Nix flake library that deploys agent skill directories into consumer projects. Skills are declared as an attrset in your `flake.nix`, sourced from arbitrary flake inputs, and materialized into a local directory tree via `nix run .#deploy-skills`.
+A Nix flake that provides two integration paths for deploying agent skills:
+- `lib.mkDeploySkills` for imperative/runtime deployment via `nix run .#deploy-skills`
+- `homeManagerModules.skills-deployer` for declarative Home Manager deployment via `home.file`
 
-## Quick Start
+## Quick Start (Runtime App)
 
 Add this flake as an input and declare your skills:
 
@@ -29,36 +31,34 @@ Add this flake as an input and declare your skills:
     in {
       apps = eachSystem ({ system, pkgs }: {
         deploy-skills = skills-deployer.lib.mkDeploySkills pkgs {
-            # Global defaults
-            defaultMode = "symlink";        # or "copy"
-            defaultTargetDir = ".agents/skills";
+          defaultMode = "symlink"; # or "copy"
+          defaultTargetDir = ".agents/skills";
 
-            skills = {
-              # Skill name = destination directory name
-              code-review = {
-                source = my-skills-repo;     # Nix store path
-                subdir = "skills/code-review"; # Required: path within source
-              };
+          skills = {
+            code-review = {
+              source = my-skills-repo;
+              subdir = "skills/code-review";
+            };
 
-              debugging = {
-                source = my-skills-repo;
-                subdir = "skills/debugging";
-                mode = "copy";                # Override: copy for this skill
-              };
+            debugging = {
+              source = my-skills-repo;
+              subdir = "skills/debugging";
+              mode = "copy";
+            };
 
-              ui-patterns = {
-                source = community-skills;
-                subdir = "patterns/ui";
-                targetDirs = [".agents/skills" ".claude/skills"]; # Deploy to multiple targets
-              };
+            ui-patterns = {
+              source = community-skills;
+              subdir = "patterns/ui";
+              targetDirs = [".agents/skills" ".claude/skills"];
             };
           };
+        };
       });
     };
 }
 ```
 
-## Usage
+## Usage (Runtime App)
 
 ```bash
 # Deploy all skills
@@ -68,14 +68,101 @@ nix run .#deploy-skills
 nix run .#deploy-skills -- --dry-run
 ```
 
-## Configuration Reference
+## Home Manager Module
+
+The flake exports a Home Manager module at:
+
+- `skills-deployer.homeManagerModules.skills-deployer`
+
+Example usage in Home Manager:
+
+```nix
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    home-manager.url = "github:nix-community/home-manager";
+    home-manager.inputs.nixpkgs.follows = "nixpkgs";
+
+    skills-deployer.url = "github:glassesneo/skills-deployer";
+    my-skills-repo.url = "github:your-org/agent-skills";
+    my-skills-repo.flake = false;
+  };
+
+  outputs = { nixpkgs, home-manager, skills-deployer, my-skills-repo, ... }:
+    {
+      homeConfigurations.my-user = home-manager.lib.homeManagerConfiguration {
+        pkgs = nixpkgs.legacyPackages.x86_64-linux;
+        modules = [
+          skills-deployer.homeManagerModules.skills-deployer
+          ({ ... }: {
+            programs.skills-deployer = {
+              enable = true;
+              defaultTargetDir = ".agents/skills";
+
+              skills = {
+                code-review = {
+                  source = my-skills-repo;
+                  subdir = "skills/code-review";
+                };
+
+                claude-only = {
+                  source = my-skills-repo;
+                  subdir = "skills/claude-only";
+                  targetDir = ".claude/skills";
+                };
+
+                shared-skill = {
+                  source = my-skills-repo;
+                  subdir = "skills/shared";
+                  targetDirs = [".agents/skills" ".claude/skills"];
+                };
+              };
+            };
+          })
+        ];
+      };
+    };
+}
+```
+
+### `programs.skills-deployer` options
+
+| Option | Type | Required | Default | Description |
+|--------|------|----------|---------|-------------|
+| `enable` | `Boolean` | No | `false` | Enable the module and generate managed `home.file` entries |
+| `defaultTargetDir` | `String` | No | `".agents/skills"` | Default parent directory relative to `$HOME` |
+| `skills` | `AttrSet<String, SkillSpecHM>` | No | `{}` | Skills keyed by deployed directory name |
+
+### `SkillSpecHM` attributes (`programs.skills-deployer.skills.<name>`)
+
+| Attribute | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `source` | `Path` | Yes | -- | Nix store path to source tree |
+| `subdir` | `String` | Yes | -- | Relative subdirectory within source |
+| `targetDir` | `Null or String` | No | `null` | Single deployment parent directory relative to `$HOME` |
+| `targetDirs` | `Null or List<String>` | No | `null` | Multi-target parent directories relative to `$HOME` |
+
+### Home Manager module behavior
+
+- Final path shape is `$HOME/<target-dir>/<skill-name>`.
+- `targetDir` and `targetDirs` are mutually exclusive.
+- When `targetDirs` is set, every entry must be non-empty, relative (no leading `/`), and must not contain `..`.
+- `targetDirs` entries must be unique after normalization (`.agents/skills`, `./.agents/skills`, and `.agents/skills/` are treated as duplicates).
+
+### Differences from `mkDeploySkills`
+
+- `mkDeploySkills` builds a runtime deployment app/script and supports `mode = "symlink" | "copy"`.
+- Home Manager module writes declarative `home.file` mappings and does not expose `mode`.
+- Home Manager path does not use `nix run .#deploy-skills`.
+
+## Configuration Reference (`mkDeploySkills`)
 
 ### `mkDeploySkills` signature
 
 ```nix
 mkDeploySkills pkgs {
   skills = { ... };
-  defaultMode = "symlink";       # optional
+  defaultMode = "symlink"; # optional
   defaultTargetDir = ".agents/skills"; # optional
 }
 ```
@@ -114,9 +201,9 @@ Individual files are symlinked from the Nix store into the target directory. The
 
 Files are copied from the Nix store into the target directory. The skill is fully independent of the Nix store after deployment and can be locally edited.
 
- Use `copy` for skills you want to customize locally. Use `symlink` for shared/immutable skills where you want to save disk space and ensure consistency.
+Use `copy` for skills you want to customize locally. Use `symlink` for shared/immutable skills where you want to save disk space and ensure consistency.
 
-## Multi-Target Deployment
+## Multi-Target Deployment (`mkDeploySkills`)
 
 Deploy a single skill to multiple directories with `targetDirs`:
 
@@ -130,7 +217,7 @@ skills = {
 };
 ```
 
-This deploys `code-review` to both `.agents/skills/code-review/` and `.claude/skills/code-review/`. Each target is tracked independently — adding or removing a directory from the list only affects that specific target.
+This deploys `code-review` to both `.agents/skills/code-review/` and `.claude/skills/code-review/`. Each target is tracked independently: adding or removing a directory from the list only affects that specific target.
 
 `targetDirs` and `targetDir` are mutually exclusive. For per-target customization (different modes or names), declare separate skill entries:
 
@@ -152,7 +239,6 @@ skills = {
 ```
 
 > **Note on manifest internals**: When `targetDirs` is used, manifest entries are keyed as `<name>@@<targetDir>`. The Bash script uses the entry's `name` field (not the manifest key) to determine the deployment destination directory. Manually-crafted manifests with `@@` keys but different `name` values will deploy to the `name` location, not the location implied by the key.
-
 
 ## Marker Files
 

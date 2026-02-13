@@ -34,3 +34,7 @@ or directly: `bash tests/run-tests.bash` (requires `jq` on PATH).
 - These tests are eval-only; do not use `home-manager switch` in test coverage.
 - `nix eval --impure` is required for `eval_hm_module`; skipping in sandboxed/non-impure environments is expected.
 - Methodology: evaluate `modules/home-manager.nix` with `lib.evalModules` plus an inline stub to validate option behavior and `home.file` mapping output without Home Manager activation.
+- Coverage split:
+  - `T42`–`T47`: successful mapping behavior (disabled/empty/default/custom/override cases)
+  - `T48`–`T53`: required-option and type-validation failures
+  - `T54`–`T59`: `targetDir`/`targetDirs` invariants and normalization-based duplicate rejection

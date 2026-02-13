@@ -1,7 +1,7 @@
 # lib/ — Nix API
 
 Public API: `default.nix` exposes `mkDeploySkillsDrv` and `mkDeploySkills`.
-Core logic: `mkDeploySkills.nix` compiles skill config into a deploy-skills wrapper.
+Core logic: `mkDeploySkills.nix` compiles runtime skill config into a `deploy-skills` wrapper.
 
 ## Contracts
 
@@ -9,7 +9,14 @@ Core logic: `mkDeploySkills.nix` compiles skill config into a deploy-skills wrap
 - Every SkillSpec requires `source` (Path) and `subdir` (String). Optional: `mode`, `targetDir`, `targetDirs`.
 - `targetDirs` (list) and `targetDir` (string) are mutually exclusive. `targetDirs` expands to N manifest entries keyed `<name>@@<dir>`.
 - Duplicate entries in `targetDirs` are rejected at eval time.
-- Static schema validation (mode values, subdir traversal, absolute paths) uses Nix `assert` at eval time.
+- Static schema validation (mode values, subdir traversal, targetDirs invariants) uses Nix `assert` at eval time.
+
+## Interface Boundaries
+
+- Home Manager support is outside `lib/` and is exported as `homeManagerModules.skills-deployer` from `flake.nix`.
+- `mkDeploySkills` (runtime app path) supports `mode = "symlink" | "copy"`.
+- Home Manager module path (`programs.skills-deployer`) does not expose `mode` and maps directly to `home.file`.
+- Keep docs and code paths separate; do not document Home Manager options as `lib.mkDeploySkills` inputs.
 
 ## Rules
 

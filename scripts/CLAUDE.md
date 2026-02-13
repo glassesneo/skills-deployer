@@ -1,7 +1,13 @@
 # scripts/ — Bash Runtime Engine
 
-`deploy-skills.bash` is the deployment engine. It is inlined into a Nix wrapper
-via `builtins.readFile` in `lib/mkDeploySkills.nix` — it is not executed directly.
+`deploy-skills.bash` is the runtime deployment engine for `lib.mkDeploySkills`.
+It is inlined into a Nix wrapper via `builtins.readFile` in `lib/mkDeploySkills.nix`.
+
+## Interface Boundaries
+
+- This script is part of the runtime app path (`nix run .#deploy-skills`).
+- Home Manager module path (`homeManagerModules.skills-deployer`) does not execute this script.
+- Declarative Home Manager deployment is produced through `programs.skills-deployer` -> `home.file` mappings.
 
 ## Shell Conventions
 
