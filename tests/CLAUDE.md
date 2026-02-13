@@ -20,6 +20,8 @@ or directly: `bash tests/run-tests.bash` (requires `jq` on PATH).
 
 - Multi-target tests (T25–T30, T33–T35) use hand-crafted manifests with `@@` keys to simulate Nix-side expansion.
 - Nix eval-time tests (T31, T31b–T31d, T32) validate `targetDirs` expansion, mutual exclusion, and path validation.
+- Name override + disabled cleanup runtime coverage is in T69–T77.
+- Name/enable eval semantics for `mkDeploySkills` are in T60–T68.
 
 ## Rules
 
@@ -29,7 +31,7 @@ or directly: `bash tests/run-tests.bash` (requires `jq` on PATH).
 
 ## Home Manager Module Tests
 
-- Home Manager module tests use IDs `T42`–`T59`.
+- Home Manager module tests use IDs `T42`–`T59` and `T78`–`T86`.
 - Use `eval_hm_module` for these tests; it stubs both `options.home.file` and `options.assertions`, then fails eval when any assertion is false before returning `home.file` JSON.
 - These tests are eval-only; do not use `home-manager switch` in test coverage.
 - `nix eval --impure` is required for `eval_hm_module`; skipping in sandboxed/non-impure environments is expected.
@@ -38,3 +40,6 @@ or directly: `bash tests/run-tests.bash` (requires `jq` on PATH).
   - `T42`–`T47`: successful mapping behavior (disabled/empty/default/custom/override cases)
   - `T48`–`T53`: required-option and type-validation failures
   - `T54`–`T59`: `targetDir`/`targetDirs` invariants and normalization-based duplicate rejection
+  - `T78`–`T79`: explicit/default `name` resolution in generated `home.file` keys
+  - `T80`–`T84`: explicit invalid `name` value failures (`""`, `.`, `..`, `/`, `@@`)
+  - `T85`–`T86`: per-skill `enable=false` omission and enabled destination collision rejection

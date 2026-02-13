@@ -24,6 +24,8 @@ It is inlined into a Nix wrapper via `builtins.readFile` in `lib/mkDeploySkills.
 ## Rules
 
 - **IMPORTANT**: `MANIFEST_PATH` is injected by the Nix wrapper. Never hardcode manifest paths.
+- `DISABLED_MANIFEST_PATH` is optional; when provided, remove only managed directories that match marker `skillName`.
 - Validate all skills before writing any files (fail-fast pattern).
 - Use `atomic_replace()` for updates — never leave partial state on disk.
 - `ENTRY_NAME` (from manifest entry's `name` field) is used for filesystem paths and marker writes. `SKILL_NAME` (manifest key) is used for ACTION_MAP lookups and log output. For existing single-target manifests, ENTRY_NAME == SKILL_NAME.
+- During disabled cleanup, skip (with warnings) unmanaged paths and marker mismatches; skip destinations that are enabled in the same run.

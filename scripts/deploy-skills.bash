@@ -1,5 +1,6 @@
 # MANIFEST_PATH is injected by Nix wrapper above this point.
-# shellcheck disable=SC2154  # MANIFEST_PATH is set by the Nix wrapper
+# DISABLED_MANIFEST_PATH is optional and may be absent in older wrappers.
+# shellcheck disable=SC2154  # MANIFEST_PATH/DISABLED_MANIFEST_PATH are set by the Nix wrapper
 
 set -euo pipefail
 
@@ -9,6 +10,8 @@ MARKER_VERSION="1"
 DRY_RUN=false
 ACTIONS_PLANNED=0
 ACTIONS_EXECUTED=0
+DEPLOY_ACTIONS_EXECUTED=0
+REMOVE_ACTIONS_EXECUTED=0
 ERRORS=()
 
 # -- Color helpers (respect NO_COLOR) ---------------------------
@@ -24,6 +27,24 @@ ok()    { printf "%s[ok]%s    %s\n" "$GREEN" "$NC" "$1"; }
 warn()  { printf "%s[warn]%s  %s\n" "$YELLOW" "$NC" "$1"; }
 die()   { printf "%s[error]%s %s\n" "$RED" "$NC" "$1" >&2; exit "${2:-1}"; }
 skip()  { printf "%s[skip]%s  %s\n" "$YELLOW" "$NC" "$1"; }
+
+canonicalize_target_dir() {
+  local raw_dir="$1"
+
+  while [[ "$raw_dir" == ./* ]]; do
+    raw_dir="${raw_dir#./}"
+  done
+
+  while [[ "$raw_dir" == */ && "$raw_dir" != "." ]]; do
+    raw_dir="${raw_dir%/}"
+  done
+
+  if [[ -z "$raw_dir" ]]; then
+    raw_dir="."
+  fi
+
+  printf '%s' "$raw_dir"
+}
 
 # -- Argument parsing --------------------------------------------
 for arg in "$@"; do
@@ -55,26 +76,37 @@ fi
 MANIFEST=$(cat "$MANIFEST_PATH")
 SKILL_NAMES=$(echo "$MANIFEST" | jq -r 'keys[]' | sort)
 
-if [[ -z "$SKILL_NAMES" ]]; then
+DISABLED_MANIFEST='[]'
+if [[ -n "${DISABLED_MANIFEST_PATH:-}" ]]; then
+  if [[ ! -f "$DISABLED_MANIFEST_PATH" ]]; then
+    die "Internal error: disabled manifest not found at $DISABLED_MANIFEST_PATH" 4
+  fi
+  DISABLED_MANIFEST=$(cat "$DISABLED_MANIFEST_PATH")
+fi
+DISABLED_ENTRIES=$(echo "$DISABLED_MANIFEST" | jq -c '.[]')
+
+if [[ -z "$SKILL_NAMES" ]] && [[ -z "$DISABLED_ENTRIES" ]]; then
   info "No skills configured. Nothing to do."
   exit 0
 fi
 
 # -- Validate all skills before any writes -----------------------
 info "Validating skills..."
-while IFS= read -r SKILL_NAME; do
-  SOURCE_PATH=$(echo "$MANIFEST" | jq -r --arg s "$SKILL_NAME" '.[$s].sourcePath')
-  SUBDIR=$(echo "$MANIFEST" | jq -r --arg s "$SKILL_NAME" '.[$s].subdir')
+if [[ -n "$SKILL_NAMES" ]]; then
+  while IFS= read -r SKILL_NAME; do
+    SOURCE_PATH=$(echo "$MANIFEST" | jq -r --arg s "$SKILL_NAME" '.[$s].sourcePath')
+    SUBDIR=$(echo "$MANIFEST" | jq -r --arg s "$SKILL_NAME" '.[$s].subdir')
 
-  if [[ ! -d "$SOURCE_PATH" ]]; then
-    ERRORS+=("Skill '$SKILL_NAME': source directory does not exist: $SOURCE_PATH (subdir: $SUBDIR)")
-    continue
-  fi
+    if [[ ! -d "$SOURCE_PATH" ]]; then
+      ERRORS+=("Skill '$SKILL_NAME': source directory does not exist: $SOURCE_PATH (subdir: $SUBDIR)")
+      continue
+    fi
 
-  if [[ ! -f "$SOURCE_PATH/SKILL.md" ]]; then
-    ERRORS+=("Skill '$SKILL_NAME': SKILL.md not found in $SOURCE_PATH. Every skill must contain a SKILL.md file.")
-  fi
-done <<< "$SKILL_NAMES"
+    if [[ ! -f "$SOURCE_PATH/SKILL.md" ]]; then
+      ERRORS+=("Skill '$SKILL_NAME': SKILL.md not found in $SOURCE_PATH. Every skill must contain a SKILL.md file.")
+    fi
+  done <<< "$SKILL_NAMES"
+fi
 
 if [[ ${#ERRORS[@]} -gt 0 ]]; then
   printf "%s[error]%s Validation failed:\n" "$RED" "$NC" >&2
@@ -88,61 +120,114 @@ ok "All skills validated."
 # -- Plan actions ------------------------------------------------
 declare -A ACTION_MAP  # SKILL_NAME -> action
 declare -A ACTION_DESC # SKILL_NAME -> human description
+declare -A ENABLED_DEST_SET # DEST -> 1
+REMOVE_SKILL_NAMES=()
+REMOVE_DESTS=()
 
-while IFS= read -r SKILL_NAME; do
-  SOURCE_PATH=$(echo "$MANIFEST" | jq -r --arg s "$SKILL_NAME" '.[$s].sourcePath')
-  MODE=$(echo "$MANIFEST" | jq -r --arg s "$SKILL_NAME" '.[$s].mode')
-  TARGET_DIR=$(echo "$MANIFEST" | jq -r --arg s "$SKILL_NAME" '.[$s].targetDir')
-  ENTRY_NAME=$(echo "$MANIFEST" | jq -r --arg s "$SKILL_NAME" '.[$s].name')
-  DEST="$TARGET_DIR/$ENTRY_NAME"
+if [[ -n "$SKILL_NAMES" ]]; then
+  while IFS= read -r SKILL_NAME; do
+    SOURCE_PATH=$(echo "$MANIFEST" | jq -r --arg s "$SKILL_NAME" '.[$s].sourcePath')
+    MODE=$(echo "$MANIFEST" | jq -r --arg s "$SKILL_NAME" '.[$s].mode')
+    TARGET_DIR=$(echo "$MANIFEST" | jq -r --arg s "$SKILL_NAME" '.[$s].targetDir')
+    ENTRY_NAME=$(echo "$MANIFEST" | jq -r --arg s "$SKILL_NAME" '.[$s].name')
+    TARGET_DIR=$(canonicalize_target_dir "$TARGET_DIR")
+    DEST="$TARGET_DIR/$ENTRY_NAME"
+    ENABLED_DEST_SET["$DEST"]="1"
 
-  if [[ ! -e "$DEST" ]]; then
-    ACTION_MAP[$SKILL_NAME]="create"
-    ACTION_DESC[$SKILL_NAME]="$MODE $SOURCE_PATH -> $DEST"
-    ACTIONS_PLANNED=$((ACTIONS_PLANNED + 1))
-    continue
-  fi
+    if [[ ! -e "$DEST" ]]; then
+      ACTION_MAP[$SKILL_NAME]="create"
+      ACTION_DESC[$SKILL_NAME]="$MODE $SOURCE_PATH -> $DEST"
+      ACTIONS_PLANNED=$((ACTIONS_PLANNED + 1))
+      continue
+    fi
 
-  MARKER_FILE="$DEST/$MARKER_FILENAME"
-  if [[ ! -f "$MARKER_FILE" ]]; then
-    die "Conflict: '$DEST' exists but is not managed by skills-deployer (no $MARKER_FILENAME found).
+    MARKER_FILE="$DEST/$MARKER_FILENAME"
+    if [[ ! -f "$MARKER_FILE" ]]; then
+      die "Conflict: '$DEST' exists but is not managed by skills-deployer (no $MARKER_FILENAME found).
   Remediation: Either remove '$DEST' manually, or add a '$MARKER_FILENAME' file if you want skills-deployer to manage it." 6
-  fi
+    fi
 
-  CURRENT_MODE=$(jq -r '.mode // empty' "$MARKER_FILE" 2>/dev/null || echo "")
-  CURRENT_SOURCE=$(jq -r '.sourcePath // empty' "$MARKER_FILE" 2>/dev/null || echo "")
+    CURRENT_MODE=$(jq -r '.mode // empty' "$MARKER_FILE" 2>/dev/null || echo "")
+    CURRENT_SOURCE=$(jq -r '.sourcePath // empty' "$MARKER_FILE" 2>/dev/null || echo "")
 
-  if [[ "$CURRENT_MODE" == "$MODE" && "$CURRENT_SOURCE" == "$SOURCE_PATH" ]]; then
-    ACTION_MAP[$SKILL_NAME]="skip"
-    ACTION_DESC[$SKILL_NAME]="up-to-date ($MODE)"
-    continue
-  fi
+    if [[ "$CURRENT_MODE" == "$MODE" && "$CURRENT_SOURCE" == "$SOURCE_PATH" ]]; then
+      ACTION_MAP[$SKILL_NAME]="skip"
+      ACTION_DESC[$SKILL_NAME]="up-to-date ($MODE)"
+      continue
+    fi
 
-  if [[ "$CURRENT_MODE" != "$MODE" ]]; then
-    ACTION_MAP[$SKILL_NAME]="replace-mode"
-    ACTION_DESC[$SKILL_NAME]="mode change $CURRENT_MODE -> $MODE for $DEST"
-  else
-    ACTION_MAP[$SKILL_NAME]="update"
-    ACTION_DESC[$SKILL_NAME]="update source $DEST"
-  fi
-  ACTIONS_PLANNED=$((ACTIONS_PLANNED + 1))
-done <<< "$SKILL_NAMES"
+    if [[ "$CURRENT_MODE" != "$MODE" ]]; then
+      ACTION_MAP[$SKILL_NAME]="replace-mode"
+      ACTION_DESC[$SKILL_NAME]="mode change $CURRENT_MODE -> $MODE for $DEST"
+    else
+      ACTION_MAP[$SKILL_NAME]="update"
+      ACTION_DESC[$SKILL_NAME]="update source $DEST"
+    fi
+    ACTIONS_PLANNED=$((ACTIONS_PLANNED + 1))
+  done <<< "$SKILL_NAMES"
+fi
+
+if [[ -n "$DISABLED_ENTRIES" ]]; then
+  while IFS= read -r DISABLED_ENTRY; do
+    DISABLED_NAME=$(echo "$DISABLED_ENTRY" | jq -r '.name')
+    TARGET_DIRS=$(echo "$DISABLED_ENTRY" | jq -r '.targetDirs[]?')
+    if [[ -z "$TARGET_DIRS" ]]; then
+      continue
+    fi
+
+    while IFS= read -r TARGET_DIR; do
+      TARGET_DIR=$(canonicalize_target_dir "$TARGET_DIR")
+      DEST="$TARGET_DIR/$DISABLED_NAME"
+
+      if [[ -n "${ENABLED_DEST_SET[$DEST]:-}" ]]; then
+        info "Skipping disabled cleanup for '$DEST' because it is enabled in this run."
+        continue
+      fi
+
+      if [[ ! -e "$DEST" ]]; then
+        continue
+      fi
+
+      MARKER_FILE="$DEST/$MARKER_FILENAME"
+      if [[ ! -f "$MARKER_FILE" ]]; then
+        warn "Skipping cleanup for unmanaged path '$DEST' (missing $MARKER_FILENAME)."
+        continue
+      fi
+
+      MARKER_SKILL_NAME=$(jq -r '.skillName // empty' "$MARKER_FILE" 2>/dev/null || echo "")
+      if [[ "$MARKER_SKILL_NAME" != "$DISABLED_NAME" ]]; then
+        warn "Skipping cleanup for '$DEST': marker skillName '$MARKER_SKILL_NAME' does not match expected '$DISABLED_NAME'."
+        continue
+      fi
+
+      REMOVE_SKILL_NAMES+=("$DISABLED_NAME")
+      REMOVE_DESTS+=("$DEST")
+      ACTIONS_PLANNED=$((ACTIONS_PLANNED + 1))
+    done <<< "$TARGET_DIRS"
+  done <<< "$DISABLED_ENTRIES"
+fi
 
 # -- Dry-run output ----------------------------------------------
 if [[ "$DRY_RUN" == "true" ]]; then
   echo ""
   info "Dry-run summary:"
   echo "---"
-  while IFS= read -r SKILL_NAME; do
-    action="${ACTION_MAP[$SKILL_NAME]}"
-    desc="${ACTION_DESC[$SKILL_NAME]}"
-    case "$action" in
-      skip)         printf "  %s: %s (no change)\n" "$SKILL_NAME" "$desc" ;;
-      create)       printf "  %s: CREATE %s\n" "$SKILL_NAME" "$desc" ;;
-      update)       printf "  %s: UPDATE %s\n" "$SKILL_NAME" "$desc" ;;
-      replace-mode) printf "  %s: REPLACE %s\n" "$SKILL_NAME" "$desc" ;;
-    esac
-  done <<< "$SKILL_NAMES"
+  if [[ -n "$SKILL_NAMES" ]]; then
+    while IFS= read -r SKILL_NAME; do
+      action="${ACTION_MAP[$SKILL_NAME]}"
+      desc="${ACTION_DESC[$SKILL_NAME]}"
+      case "$action" in
+        skip)         printf "  %s: %s (no change)\n" "$SKILL_NAME" "$desc" ;;
+        create)       printf "  %s: CREATE %s\n" "$SKILL_NAME" "$desc" ;;
+        update)       printf "  %s: UPDATE %s\n" "$SKILL_NAME" "$desc" ;;
+        replace-mode) printf "  %s: REPLACE %s\n" "$SKILL_NAME" "$desc" ;;
+      esac
+    done <<< "$SKILL_NAMES"
+  fi
+
+  for i in "${!REMOVE_DESTS[@]}"; do
+    printf "  %s: REMOVE %s\n" "${REMOVE_SKILL_NAMES[$i]}" "${REMOVE_DESTS[$i]}"
+  done
   echo "---"
   if [[ $ACTIONS_PLANNED -gt 0 ]]; then
     warn "$ACTIONS_PLANNED change(s) would be applied."
@@ -215,40 +300,74 @@ atomic_replace() {
 }
 
 info "Deploying skills..."
-while IFS= read -r SKILL_NAME; do
-  action="${ACTION_MAP[$SKILL_NAME]}"
-  if [[ "$action" == "skip" ]]; then
-    skip "$SKILL_NAME: already up-to-date"
+if [[ -n "$SKILL_NAMES" ]]; then
+  while IFS= read -r SKILL_NAME; do
+    action="${ACTION_MAP[$SKILL_NAME]}"
+    if [[ "$action" == "skip" ]]; then
+      skip "$SKILL_NAME: already up-to-date"
+      continue
+    fi
+
+    SOURCE_PATH=$(echo "$MANIFEST" | jq -r --arg s "$SKILL_NAME" '.[$s].sourcePath')
+    MODE=$(echo "$MANIFEST" | jq -r --arg s "$SKILL_NAME" '.[$s].mode')
+    TARGET_DIR=$(echo "$MANIFEST" | jq -r --arg s "$SKILL_NAME" '.[$s].targetDir')
+    ENTRY_NAME=$(echo "$MANIFEST" | jq -r --arg s "$SKILL_NAME" '.[$s].name')
+    TARGET_DIR=$(canonicalize_target_dir "$TARGET_DIR")
+    DEST="$TARGET_DIR/$ENTRY_NAME"
+
+    mkdir -p "$TARGET_DIR"
+
+    case "$action" in
+      create)
+        if [[ "$MODE" == "copy" ]]; then
+          deploy_copy "$SOURCE_PATH" "$DEST"
+        else
+          deploy_symlink "$SOURCE_PATH" "$DEST"
+        fi
+        write_marker "$DEST" "$MODE" "$SOURCE_PATH" "$ENTRY_NAME"
+        ok "$SKILL_NAME: created ($MODE)"
+        ;;
+      update|replace-mode)
+        atomic_replace "$SOURCE_PATH" "$DEST" "$MODE" "$ENTRY_NAME"
+        ok "$SKILL_NAME: updated ($action -> $MODE)"
+        ;;
+    esac
+    ACTIONS_EXECUTED=$((ACTIONS_EXECUTED + 1))
+    DEPLOY_ACTIONS_EXECUTED=$((DEPLOY_ACTIONS_EXECUTED + 1))
+  done <<< "$SKILL_NAMES"
+fi
+
+for i in "${!REMOVE_DESTS[@]}"; do
+  DEST="${REMOVE_DESTS[$i]}"
+  DISABLED_NAME="${REMOVE_SKILL_NAMES[$i]}"
+
+  if [[ ! -e "$DEST" ]]; then
+    skip "$DISABLED_NAME: already absent ($DEST)"
     continue
   fi
 
-  SOURCE_PATH=$(echo "$MANIFEST" | jq -r --arg s "$SKILL_NAME" '.[$s].sourcePath')
-  MODE=$(echo "$MANIFEST" | jq -r --arg s "$SKILL_NAME" '.[$s].mode')
-  TARGET_DIR=$(echo "$MANIFEST" | jq -r --arg s "$SKILL_NAME" '.[$s].targetDir')
-  ENTRY_NAME=$(echo "$MANIFEST" | jq -r --arg s "$SKILL_NAME" '.[$s].name')
-  DEST="$TARGET_DIR/$ENTRY_NAME"
+  MARKER_FILE="$DEST/$MARKER_FILENAME"
+  if [[ ! -f "$MARKER_FILE" ]]; then
+    warn "Skipping cleanup for unmanaged path '$DEST' (missing $MARKER_FILENAME)."
+    continue
+  fi
 
-  mkdir -p "$TARGET_DIR"
+  MARKER_SKILL_NAME=$(jq -r '.skillName // empty' "$MARKER_FILE" 2>/dev/null || echo "")
+  if [[ "$MARKER_SKILL_NAME" != "$DISABLED_NAME" ]]; then
+    warn "Skipping cleanup for '$DEST': marker skillName '$MARKER_SKILL_NAME' does not match expected '$DISABLED_NAME'."
+    continue
+  fi
 
-  case "$action" in
-    create)
-      if [[ "$MODE" == "copy" ]]; then
-        deploy_copy "$SOURCE_PATH" "$DEST"
-      else
-        deploy_symlink "$SOURCE_PATH" "$DEST"
-      fi
-      write_marker "$DEST" "$MODE" "$SOURCE_PATH" "$ENTRY_NAME"
-      ok "$SKILL_NAME: created ($MODE)"
-      ;;
-    update|replace-mode)
-      atomic_replace "$SOURCE_PATH" "$DEST" "$MODE" "$ENTRY_NAME"
-      ok "$SKILL_NAME: updated ($action -> $MODE)"
-      ;;
-  esac
+  rm -rf "$DEST"
+  ok "$DISABLED_NAME: removed disabled destination $DEST"
   ACTIONS_EXECUTED=$((ACTIONS_EXECUTED + 1))
-done <<< "$SKILL_NAMES"
+  REMOVE_ACTIONS_EXECUTED=$((REMOVE_ACTIONS_EXECUTED + 1))
+done
 
-TOTAL_SKILLS=$(echo "$SKILL_NAMES" | wc -l | tr -d ' ')
-SKIPPED=$((TOTAL_SKILLS - ACTIONS_EXECUTED))
+TOTAL_ENABLED_SKILLS=0
+if [[ -n "$SKILL_NAMES" ]]; then
+  TOTAL_ENABLED_SKILLS=$(echo "$SKILL_NAMES" | wc -l | tr -d ' ')
+fi
+SKIPPED=$((TOTAL_ENABLED_SKILLS - DEPLOY_ACTIONS_EXECUTED))
 echo ""
-ok "Done. $ACTIONS_EXECUTED skill(s) deployed, $SKIPPED skipped."
+ok "Done. $ACTIONS_EXECUTED change(s) applied ($DEPLOY_ACTIONS_EXECUTED deployed, $REMOVE_ACTIONS_EXECUTED removed), $SKIPPED deploy entry(ies) skipped."

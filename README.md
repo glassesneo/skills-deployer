@@ -131,12 +131,14 @@ Example usage in Home Manager:
 |--------|------|----------|---------|-------------|
 | `enable` | `Boolean` | No | `false` | Enable the module and generate managed `home.file` entries |
 | `defaultTargetDir` | `String` | No | `".agents/skills"` | Default parent directory relative to `$HOME` |
-| `skills` | `AttrSet<String, SkillSpecHM>` | No | `{}` | Skills keyed by deployed directory name |
+| `skills` | `AttrSet<String, SkillSpecHM>` | No | `{}` | Skills keyed by logical ID; deployed directory name defaults to key unless `name` is set |
 
 ### `SkillSpecHM` attributes (`programs.skills-deployer.skills.<name>`)
 
 | Attribute | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
+| `name` | `Null or String` | No | `null` | Optional deployed directory name override |
+| `enable` | `Boolean` | No | `true` | Per-skill toggle; `false` omits this skill from generated `home.file` entries |
 | `source` | `Path` | Yes | -- | Nix store path to source tree |
 | `subdir` | `String` | Yes | -- | Relative subdirectory within source |
 | `targetDir` | `Null or String` | No | `null` | Single deployment parent directory relative to `$HOME` |
@@ -145,9 +147,14 @@ Example usage in Home Manager:
 ### Home Manager module behavior
 
 - Final path shape is `$HOME/<target-dir>/<skill-name>`.
+- `<skill-name>` is the attr key by default, or `name` when explicitly set.
+- `enable = false` on a skill omits only that skill from `home.file`; other skills still render.
 - `targetDir` and `targetDirs` are mutually exclusive.
 - When `targetDirs` is set, every entry must be non-empty, relative (no leading `/`), and must not contain `..`.
-- `targetDirs` entries must be unique after normalization (`.agents/skills`, `./.agents/skills`, and `.agents/skills/` are treated as duplicates).
+- `targetDirs` entries must be unique after canonicalization (all leading `./` prefixes are collapsed and trailing `/` characters are stripped; `.` semantics are preserved).
+- Destination collisions across enabled skills are rejected at eval time (`<targetDir>/<name>` must be unique).
+
+> **Home Manager caveat**: cleanup of removed/disabled entries relies on current Home Manager activation behavior. Very old Home Manager releases were not explicitly validated.
 
 ### Differences from `mkDeploySkills`
 
@@ -177,7 +184,7 @@ mkDeploySkills pkgs {
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `skills` | `AttrSet<String, SkillSpec>` | Yes | -- | Skills to deploy, keyed by destination name |
+| `skills` | `AttrSet<String, SkillSpec>` | Yes | -- | Skills keyed by logical ID; deployed directory name defaults to key unless `name` is set |
 | `defaultMode` | `"symlink"` or `"copy"` | No | `"symlink"` | Default deployment mode |
 | `defaultTargetDir` | `String` | No | `".agents/skills"` | Default parent directory for skills |
 
@@ -187,9 +194,19 @@ mkDeploySkills pkgs {
 |-----------|------|----------|---------|-------------|
 | `source` | `Path` or `Derivation` | Yes | -- | Nix store path to source tree |
 | `subdir` | `String` | Yes | -- | Relative subdirectory within source; must not contain `..` or start with `/` |
+| `name` | `String` | No | Uses skill attr key | Per-skill deployed directory name override; cannot be empty, `.`, `..`, contain `/`, or contain `@@` |
+| `enable` | `Boolean` | No | `true` | Per-skill toggle; `false` excludes entry from deploy manifest and includes it in disabled cleanup payload |
 | `mode` | `"symlink"` or `"copy"` | No | Uses `defaultMode` | Per-skill mode override |
 | `targetDir` | `String` | No | Uses `defaultTargetDir` | Per-skill target directory override |
 | `targetDirs` | `List<String>` | No | `null` | Deploy to multiple directories; mutually exclusive with `targetDir` |
+
+### Runtime behavior (`mkDeploySkills`)
+
+- Destination collisions across enabled skills are rejected at eval time (`<targetDir>/<name>` must be unique after directory canonicalization).
+- Enabled-vs-disabled destination overlap is invalid for the runtime manifest path set and is rejected at eval time (using the same canonical destination form).
+- Disabled-skill cleanup removes a directory only when managed-marker ownership is proven and marker `skillName` matches the expected deployed name.
+- Unmanaged or mismatched marker paths are warned and skipped (not removed).
+- `--dry-run` reports pending remove actions for disabled-skill cleanup.
 
 ## Deployment Modes
 

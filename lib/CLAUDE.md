@@ -6,10 +6,13 @@ Core logic: `mkDeploySkills.nix` compiles runtime skill config into a `deploy-sk
 ## Contracts
 
 - `mkDeploySkills.nix` takes `{ pkgs, skills, defaultMode ? "symlink", defaultTargetDir ? ".agents/skills" }`.
-- Every SkillSpec requires `source` (Path) and `subdir` (String). Optional: `mode`, `targetDir`, `targetDirs`.
+- Every SkillSpec requires `source` (Path) and `subdir` (String). Optional: `name`, `enable`, `mode`, `targetDir`, `targetDirs`.
+- Explicit `name` must be non-empty and cannot be `.`, `..`, contain `/`, or contain `@@`.
+- `enable = false` excludes a skill from the enabled manifest and includes it in the disabled cleanup payload.
 - `targetDirs` (list) and `targetDir` (string) are mutually exclusive. `targetDirs` expands to N manifest entries keyed `<name>@@<dir>`.
 - Duplicate entries in `targetDirs` are rejected at eval time.
-- Static schema validation (mode values, subdir traversal, targetDirs invariants) uses Nix `assert` at eval time.
+- Enabled destination collisions and enabled-vs-disabled destination overlap are rejected at eval time.
+- Static schema validation (mode values, subdir traversal, name/target invariants) uses Nix `assert` at eval time.
 
 ## Interface Boundaries
 

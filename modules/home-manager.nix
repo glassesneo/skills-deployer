@@ -8,6 +8,16 @@
 
   skillType = lib.types.submodule {
     options = {
+      name = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Optional deployed skill directory name override";
+      };
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = "Whether to deploy this skill";
+      };
       source = lib.mkOption {
         type = lib.types.path;
         description = "Nix store path to source tree";
@@ -30,18 +40,28 @@
   };
 
   normalizePath = directoryPath: let
-    trimmedSlashes = lib.removeSuffix "/" (lib.removeSuffix "/" directoryPath);
-    trimmedDot =
-      if lib.hasPrefix "./" trimmedSlashes
-      then builtins.substring 2 (builtins.stringLength trimmedSlashes) trimmedSlashes
-      else trimmedSlashes;
+    stripLeadingDotPrefixes = value:
+      if value == "." || value == "./"
+      then "."
+      else if lib.hasPrefix "./" value
+      then stripLeadingDotPrefixes (builtins.substring 2 ((builtins.stringLength value) - 2) value)
+      else value;
+
+    stripTrailingSlashes = value:
+      if value == "."
+      then "."
+      else if lib.hasSuffix "/" value
+      then stripTrailingSlashes (lib.removeSuffix "/" value)
+      else value;
   in
-    trimmedDot;
+    stripTrailingSlashes (stripLeadingDotPrefixes directoryPath);
 
   getTargetPath = skillName: targetDir: "${targetDir}/${skillName}";
-  getSourcePath = skillName: let
-    skill = cfg.skills.${skillName};
-  in "${skill.source}/${skill.subdir}";
+  getSourcePath = skill: "${skill.source}/${skill.subdir}";
+  getResolvedSkillName = skillName: skill:
+    if skill.name != null
+    then skill.name
+    else skillName;
 
   getDirs = skill:
     if skill.targetDirs != null
@@ -53,6 +73,11 @@
   validateSkill = skillName: skill: let
     hasTargetDir = skill.targetDir != null;
     hasTargetDirs = skill.targetDirs != null;
+    hasExplicitName = skill.name != null;
+    explicitName =
+      if hasExplicitName
+      then skill.name
+      else "";
     dirs =
       if hasTargetDirs
       then skill.targetDirs
@@ -83,14 +108,49 @@
       assertion = (!hasTargetDirs) || (builtins.length normalized == builtins.length (lib.unique normalized));
       message = "skills-deployer: skill '${skillName}' has duplicate entries in 'targetDirs'. Each target directory must be unique.";
     }
+    {
+      assertion = (!hasExplicitName) || (builtins.stringLength explicitName > 0);
+      message = "skills-deployer: skill '${skillName}' has invalid 'name'. It cannot be empty.";
+    }
+    {
+      assertion = (!hasExplicitName) || ((explicitName != ".") && (explicitName != ".."));
+      message = "skills-deployer: skill '${skillName}' has invalid 'name'. '.' and '..' are forbidden.";
+    }
+    {
+      assertion = (!hasExplicitName) || !(lib.hasInfix "/" explicitName);
+      message = "skills-deployer: skill '${skillName}' has invalid 'name'. '/' is forbidden.";
+    }
+    {
+      assertion = (!hasExplicitName) || !(lib.hasInfix "@@" explicitName);
+      message = "skills-deployer: skill '${skillName}' has invalid 'name'. '@@' is forbidden.";
+    }
   ];
 
   allSkillAssertions =
     lib.flatten (lib.mapAttrsToList validateSkill cfg.skills);
 
-  skillToAttrs = skillName: targetDirs: let
-    targetPath = dir: getTargetPath skillName dir;
-    sourcePath = getSourcePath skillName;
+  enabledSkillDestinationPaths = lib.flatten (
+    lib.mapAttrsToList
+    (skillName: skill:
+      if skill.enable
+      then let
+        resolvedName = getResolvedSkillName skillName skill;
+        normalizedDirs = map normalizePath (getDirs skill);
+      in
+        map (dir: getTargetPath resolvedName dir) normalizedDirs
+      else [])
+    cfg.skills
+  );
+
+  enabledSkillDestinationCollisionAssertion = {
+    assertion = builtins.length enabledSkillDestinationPaths == builtins.length (lib.unique enabledSkillDestinationPaths);
+    message = "skills-deployer: enabled skills resolve to duplicate destination paths. Each '<targetDir>/<name>' destination must be unique.";
+  };
+
+  allAssertions = allSkillAssertions ++ [enabledSkillDestinationCollisionAssertion];
+
+  skillToAttrs = resolvedName: sourcePath: targetDirs: let
+    targetPath = dir: getTargetPath resolvedName dir;
     skillNameValuePair = dir:
       lib.attrsets.nameValuePair (targetPath dir) {
         source = sourcePath;
@@ -100,7 +160,15 @@
 
   deployedSkillsAttrs =
     lib.attrsets.concatMapAttrs
-    (name: skill: let dirs = getDirs skill; in skillToAttrs name dirs)
+    (skillName: skill:
+      if skill.enable
+      then let
+        dirs = getDirs skill;
+        resolvedName = getResolvedSkillName skillName skill;
+        normalizedDirs = map normalizePath dirs;
+      in
+        skillToAttrs resolvedName (getSourcePath skill) normalizedDirs
+      else {})
     cfg.skills;
 in {
   options.programs.skills-deployer = {
@@ -120,7 +188,7 @@ in {
   };
 
   config = lib.mkIf cfg.enable {
-    assertions = allSkillAssertions;
+    assertions = allAssertions;
     home.file = deployedSkillsAttrs;
   };
 }
