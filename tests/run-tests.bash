@@ -56,15 +56,6 @@ assert_not_contains() {
   return 1
 }
 
-assert_file_content_eq() {
-  local filepath="$1" expected="$2" msg="${3:-}"
-  local actual
-  actual=$(cat "$filepath")
-  if [[ "$actual" == "$expected" ]]; then return 0; fi
-  printf "    ASSERT FAILED: file content mismatch for %s. Expected '%s', got '%s' %s\n" "$filepath" "$expected" "$actual" "$msg" >&2
-  return 1
-}
-
 run_test() {
   local name="$1"
   TOTAL=$((TOTAL + 1))
@@ -113,14 +104,6 @@ EOF
 }
 
 # -- Helper: run deploy script in a workdir ---------------------
-run_deploy() {
-  local workdir="$1" manifest="$2"
-  shift 2
-  local exit_code=0
-  (cd "$workdir" && MANIFEST_PATH="$manifest" bash "$DEPLOY_SCRIPT" "$@") || exit_code=$?
-  return "$exit_code"
-}
-
 run_deploy_capture() {
   local workdir="$1" manifest="$2"
   shift 2
@@ -195,6 +178,101 @@ EOF
   )
 
   nix eval --impure --json --expr "$nix_expr"
+}
+
+strip_nix_search_path_warnings() {
+  local input="$1"
+  local line
+  local filtered=""
+
+  while IFS= read -r line; do
+    if [[ "$line" == warning:\ Nix\ search\ path* ]]; then
+      continue
+    fi
+    if [[ -n "$filtered" ]]; then
+      filtered+=$'\n'
+    fi
+    filtered+="$line"
+  done <<< "$input"
+
+  printf "%s" "$filtered"
+}
+
+assert_nix_eval_fails_raw() {
+  local case_name="$1" expr="$2"
+  shift 2
+  local output exit_code=0
+  output=$(nix eval --impure --raw --expr "$expr" 2>&1) || exit_code=$?
+
+  if [[ "$exit_code" -eq 0 ]]; then
+    printf "    ASSERT FAILED: nix eval should fail (%s)\n" "$case_name" >&2
+    return 1
+  fi
+
+  local needle
+  for needle in "$@"; do
+    assert_contains "$output" "$needle" "[$case_name]"
+  done
+}
+
+assert_mkdeployskills_fails() {
+  local case_name="$1" skills_block="$2"
+  shift 2
+  local expr
+  expr=$(cat <<EOF
+let
+  pkgs = import <nixpkgs> {};
+  mkDeploySkills = import ${REPO_ROOT}/lib/mkDeploySkills.nix;
+  drv = mkDeploySkills {
+    inherit pkgs;
+    skills = {
+${skills_block}
+    };
+  };
+in builtins.toJSON drv.drvAttrs
+EOF
+)
+
+  assert_nix_eval_fails_raw "$case_name" "$expr" "$@"
+}
+
+assert_hm_eval_fails() {
+  local case_name="$1" programs_config="$2"
+  shift 2
+  local output exit_code=0
+  output=$(eval_hm_module "$programs_config" 2>&1) || exit_code=$?
+  output=$(strip_nix_search_path_warnings "$output")
+
+  if [[ "$exit_code" -eq 0 ]]; then
+    printf "    ASSERT FAILED: hm module eval should fail (%s)\n" "$case_name" >&2
+    return 1
+  fi
+
+  local needle
+  for needle in "$@"; do
+    assert_contains "$output" "$needle" "[$case_name]"
+  done
+}
+
+assert_hm_single_skill_fails() {
+  local case_name="$1" skill_block="$2"
+  shift 2
+  local programs_config
+  programs_config=$(cat <<EOF
+{
+  enable = true;
+  skills = {
+    skill-a = {
+      source = ${FIXTURES_DIR}/valid-skill;
+      subdir = "sub-a";
+${skill_block}
+    };
+  };
+}
+EOF
+)
+
+  assert_hm_eval_fails "$case_name" "$programs_config" "$@"
 }
 
 # ================================================================
@@ -1169,124 +1247,73 @@ EOF
 }
 
 # ================================================================
-# T31: nix_targetdirs_mutual_exclusion
+# T31: nix_targetdirs_validation_matrix
 # ================================================================
-test_T31_nix_targetdirs_mutual_exclusion() {
-  local exit_code=0
-  local output
-  output=$(nix eval --impure --raw --expr '
-    let
-      pkgs = import <nixpkgs> {};
-      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
-      drv = mkDeploySkills {
-        inherit pkgs;
-        skills = {
-          bad-skill = {
-            source = ./. ;
-            subdir = "tests/fixtures/valid-skill/sub-a";
-            targetDir = ".agents/skills";
-            targetDirs = [".agents/skills" ".claude/skills"];
-          };
-        };
+test_T31_nix_targetdirs_validation_matrix() {
+  assert_mkdeployskills_fails "targetDir + targetDirs are mutually exclusive" '
+      bad-skill = {
+        source = ./.;
+        subdir = "tests/fixtures/valid-skill/sub-a";
+        targetDir = ".agents/skills";
+        targetDirs = [".agents/skills" ".claude/skills"];
       };
-    in builtins.toJSON drv.drvAttrs
-  ' 2>&1) || exit_code=$?
+  ' "both" "targetDirs"
 
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: nix eval should have failed for mutual exclusion\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "both" "should mention both targetDir and targetDirs"
-}
-
-# ================================================================
-# T31b: nix_targetdirs_empty
-# ================================================================
-test_T31b_nix_targetdirs_empty() {
-  local exit_code=0
-  local output
-  output=$(nix eval --impure --raw --expr '
-    let
-      pkgs = import <nixpkgs> {};
-      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
-      drv = mkDeploySkills {
-        inherit pkgs;
-        skills = {
-          bad-skill = {
-            source = ./. ;
-            subdir = "tests/fixtures/valid-skill/sub-a";
-            targetDirs = [];
-          };
-        };
+  assert_mkdeployskills_fails "targetDirs rejects empty list" '
+      bad-skill = {
+        source = ./.;
+        subdir = "tests/fixtures/valid-skill/sub-a";
+        targetDirs = [];
       };
-    in builtins.toJSON drv.drvAttrs
-  ' 2>&1) || exit_code=$?
+  ' "empty"
 
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: nix eval should have failed for empty targetDirs\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "empty" "should mention empty targetDirs"
-}
-
-# ================================================================
-# T31c: nix_targetdirs_absolute_path
-# ================================================================
-test_T31c_nix_targetdirs_absolute_path() {
-  local exit_code=0
-  local output
-  output=$(nix eval --impure --raw --expr '
-    let
-      pkgs = import <nixpkgs> {};
-      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
-      drv = mkDeploySkills {
-        inherit pkgs;
-        skills = {
-          bad-skill = {
-            source = ./. ;
-            subdir = "tests/fixtures/valid-skill/sub-a";
-            targetDirs = ["/etc/skills"];
-          };
-        };
+  assert_mkdeployskills_fails "targetDirs rejects absolute path entries" '
+      bad-skill = {
+        source = ./.;
+        subdir = "tests/fixtures/valid-skill/sub-a";
+        targetDirs = ["/etc/skills"];
       };
-    in builtins.toJSON drv.drvAttrs
-  ' 2>&1) || exit_code=$?
+  ' "must be relative"
 
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: nix eval should have failed for absolute targetDirs entry\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "must be relative" "should mention must be relative"
-}
-
-# ================================================================
-# T31d: nix_targetdirs_dotdot
-# ================================================================
-test_T31d_nix_targetdirs_dotdot() {
-  local exit_code=0
-  local output
-  output=$(nix eval --impure --raw --expr '
-    let
-      pkgs = import <nixpkgs> {};
-      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
-      drv = mkDeploySkills {
-        inherit pkgs;
-        skills = {
-          bad-skill = {
-            source = ./. ;
-            subdir = "tests/fixtures/valid-skill/sub-a";
-            targetDirs = ["../escape/skills"];
-          };
-        };
+  assert_mkdeployskills_fails "targetDirs rejects traversal entries" '
+      bad-skill = {
+        source = ./.;
+        subdir = "tests/fixtures/valid-skill/sub-a";
+        targetDirs = ["../escape/skills"];
       };
-    in builtins.toJSON drv.drvAttrs
-  ' 2>&1) || exit_code=$?
+  ' "forbidden"
 
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: nix eval should have failed for targetDirs entry with ..\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "forbidden" "should mention forbidden"
+  assert_mkdeployskills_fails "targetDirs rejects empty elements" '
+      bad-skill = {
+        source = ./.;
+        subdir = "tests/fixtures/valid-skill/sub-a";
+        targetDirs = [""];
+      };
+  ' "cannot be empty"
+
+  assert_mkdeployskills_fails "targetDirs rejects normalized duplicates" '
+      my-skill = {
+        source = ./.;
+        subdir = "tests/fixtures/valid-skill/sub-a";
+        targetDirs = [".agents/skills" "./.agents/skills" ".agents/skills/"];
+      };
+  ' "duplicate entries"
+
+  assert_mkdeployskills_fails "targetDir rejects list values" '
+      bad-skill = {
+        source = ./.;
+        subdir = "tests/fixtures/valid-skill/sub-a";
+        targetDir = [".agents/skills" ".claude/skills"];
+      };
+  ' "invalid type" "targetDirs"
+
+  assert_mkdeployskills_fails "targetDirs rejects string values" '
+      bad-skill = {
+        source = ./.;
+        subdir = "tests/fixtures/valid-skill/sub-a";
+        targetDirs = ".agents/skills";
+      };
+  ' "invalid type" "targetDir"
 }
 
 # ================================================================
@@ -1596,126 +1623,6 @@ test_T37_nix_manifest_key_collision() {
 }
 
 # ================================================================
-# T38: nix_targetdirs_empty_element
-# ================================================================
-test_T38_nix_targetdirs_empty_element() {
-  local output exit_code=0
-  output=$(nix eval --impure --raw --expr '
-    let
-      pkgs = import <nixpkgs> {};
-      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
-      drv = mkDeploySkills {
-        inherit pkgs;
-        skills = {
-          bad-skill = {
-            source = ./. ;
-            subdir = "tests/fixtures/valid-skill/sub-a";
-            targetDirs = [""];
-          };
-        };
-      };
-    in builtins.toJSON drv.drvAttrs
-  ' 2>&1) || exit_code=$?
-
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: nix eval should have failed for empty targetDirs element\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "cannot be empty" "should mention cannot be empty"
-}
-
-# ================================================================
-# T39: nix_targetdirs_path_normalization
-# ================================================================
-test_T39_nix_targetdirs_path_normalization() {
-  local output exit_code=0
-  output=$(nix eval --impure --raw --expr '
-    let
-      pkgs = import <nixpkgs> {};
-      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
-      drv = mkDeploySkills {
-        inherit pkgs;
-        skills = {
-          my-skill = {
-            source = '"$REPO_ROOT"'/tests/fixtures/valid-skill;
-            subdir = "sub-a";
-            targetDirs = [".agents/skills" "./.agents/skills" ".agents/skills/"];
-          };
-        };
-      };
-    in builtins.toJSON drv.drvAttrs
-  ' 2>&1) || exit_code=$?
-
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: nix eval should fail for duplicate normalized targetDirs\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "duplicate entries" "should mention duplicate targetDirs entries"
-}
-
-# ================================================================
-# T40: nix_targetdir_wrong_type
-# ================================================================
-test_T40_nix_targetdir_wrong_type() {
-  local exit_code=0
-  local output
-  output=$(nix eval --impure --raw --expr '
-    let
-      pkgs = import <nixpkgs> {};
-      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
-      drv = mkDeploySkills {
-        inherit pkgs;
-        skills = {
-          bad-skill = {
-            source = '"$REPO_ROOT"'/tests/fixtures/valid-skill/sub-a;
-            subdir = ".";
-            targetDir = [".agents/skills" ".claude/skills"];
-          };
-        };
-      };
-    in builtins.toJSON drv.drvAttrs
-  ' 2>&1) || exit_code=$?
-
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: nix eval should have failed for targetDir with wrong type\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "invalid type" "should mention invalid type"
-  assert_contains "$output" "targetDirs" "should suggest targetDirs (plural)"
-}
-
-# ================================================================
-# T41: nix_targetdirs_wrong_type
-# ================================================================
-test_T41_nix_targetdirs_wrong_type() {
-  local exit_code=0
-  local output
-  output=$(nix eval --impure --raw --expr '
-    let
-      pkgs = import <nixpkgs> {};
-      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
-      drv = mkDeploySkills {
-        inherit pkgs;
-        skills = {
-          bad-skill = {
-            source = '"$REPO_ROOT"'/tests/fixtures/valid-skill/sub-a;
-            subdir = ".";
-            targetDirs = ".agents/skills";  # String instead of list
-          };
-        };
-      };
-    in builtins.toJSON drv.drvAttrs
-  ' 2>&1) || exit_code=$?
-
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: nix eval should have failed for targetDirs with wrong type\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "invalid type" "should mention invalid type"
-  assert_contains "$output" "targetDir" "should suggest targetDir (singular)"
-}
-
-# ================================================================
 # T42: hm_disabled_empty
 # ================================================================
 test_T42_hm_disabled_empty() {
@@ -1876,7 +1783,7 @@ test_T48_hm_missing_source_fails() {
       };
     };
   }' 2>&1) || exit_code=$?
-  output=$(echo "$output" | grep -v "^warning: Nix search path")
+  output=$(strip_nix_search_path_warnings "$output")
 
   if [[ "$exit_code" -eq 0 ]]; then
     printf "    ASSERT FAILED: hm module eval should fail when source is missing\n" >&2
@@ -1899,7 +1806,7 @@ test_T49_hm_missing_subdir_fails() {
       };
     };
   }" 2>&1) || exit_code=$?
-  output=$(echo "$output" | grep -v "^warning: Nix search path")
+  output=$(strip_nix_search_path_warnings "$output")
 
   if [[ "$exit_code" -eq 0 ]]; then
     printf "    ASSERT FAILED: hm module eval should fail when subdir is missing\n" >&2
@@ -1923,7 +1830,7 @@ test_T50_hm_source_wrong_type_fails() {
       };
     };
   }' 2>&1) || exit_code=$?
-  output=$(echo "$output" | grep -v "^warning: Nix search path")
+  output=$(strip_nix_search_path_warnings "$output")
 
   if [[ "$exit_code" -eq 0 ]]; then
     printf "    ASSERT FAILED: hm module eval should fail for source wrong type\n" >&2
@@ -1962,204 +1869,20 @@ test_T51_hm_targetdirs_multi_target() {
 }
 
 # ================================================================
-# T52: hm_targetdir_wrong_type_fails
+# T52: hm_targetdir_targetdirs_validation_matrix
 # ================================================================
-test_T52_hm_targetdir_wrong_type_fails() {
-  local output exit_code=0
-  output=$(eval_hm_module "{
-    enable = true;
-    skills = {
-      skill-a = {
-        source = ${FIXTURES_DIR}/valid-skill;
-        subdir = \"sub-a\";
-        targetDir = [\"list\"];
-      };
-    };
-  }" 2>&1) || exit_code=$?
-  output=$(echo "$output" | grep -v "^warning: Nix search path")
-
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: hm module eval should fail for targetDir wrong type\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "targetDir" "error should mention targetDir"
-  assert_contains "$output" "type" "error should mention invalid type"
-}
-
-# ================================================================
-# T53: hm_targetdirs_wrong_type_fails
-# ================================================================
-test_T53_hm_targetdirs_wrong_type_fails() {
-  local output exit_code=0
-  output=$(eval_hm_module "{
-    enable = true;
-    skills = {
-      skill-a = {
-        source = ${FIXTURES_DIR}/valid-skill;
-        subdir = \"sub-a\";
-        targetDirs = \".agents/skills\";
-      };
-    };
-  }" 2>&1) || exit_code=$?
-  output=$(echo "$output" | grep -v "^warning: Nix search path")
-
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: hm module eval should fail for targetDirs wrong type\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "targetDirs" "error should mention targetDirs"
-  assert_contains "$output" "list" "error should mention list type"
-}
-
-# ================================================================
-# T54: hm_targetdir_targetdirs_mutual_exclusion_fails
-# ================================================================
-test_T54_hm_targetdir_targetdirs_mutual_exclusion_fails() {
-  local output exit_code=0
-  output=$(eval_hm_module "{
-    enable = true;
-    skills = {
-      skill-a = {
-        source = ${FIXTURES_DIR}/valid-skill;
-        subdir = \"sub-a\";
-        targetDir = \".agents/skills\";
-        targetDirs = [\".claude/skills\"];
-      };
-    };
-  }" 2>&1) || exit_code=$?
-  output=$(echo "$output" | grep -v "^warning: Nix search path")
-
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: hm module eval should fail when both targetDir and targetDirs are set\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "both" "error should mention both targetDir and targetDirs"
-  assert_contains "$output" "targetDirs" "error should mention targetDirs"
-}
-
-# ================================================================
-# T55: hm_targetdirs_empty_list_fails
-# ================================================================
-test_T55_hm_targetdirs_empty_list_fails() {
-  local output exit_code=0
-  output=$(eval_hm_module "{
-    enable = true;
-    skills = {
-      skill-a = {
-        source = ${FIXTURES_DIR}/valid-skill;
-        subdir = \"sub-a\";
-        targetDirs = [];
-      };
-    };
-  }" 2>&1) || exit_code=$?
-  output=$(echo "$output" | grep -v "^warning: Nix search path")
-
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: hm module eval should fail for empty targetDirs\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "empty" "error should mention empty targetDirs"
-  assert_contains "$output" "targetDirs" "error should mention targetDirs"
-}
-
-# ================================================================
-# T56: hm_targetdirs_absolute_entry_fails
-# ================================================================
-test_T56_hm_targetdirs_absolute_entry_fails() {
-  local output exit_code=0
-  output=$(eval_hm_module "{
-    enable = true;
-    skills = {
-      skill-a = {
-        source = ${FIXTURES_DIR}/valid-skill;
-        subdir = \"sub-a\";
-        targetDirs = [\"/etc/skills\"];
-      };
-    };
-  }" 2>&1) || exit_code=$?
-  output=$(echo "$output" | grep -v "^warning: Nix search path")
-
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: hm module eval should fail for absolute targetDirs entry\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "targetDirs" "error should mention targetDirs"
-  assert_contains "$output" "relative" "error should mention relative path requirement"
-}
-
-# ================================================================
-# T57: hm_targetdirs_dotdot_entry_fails
-# ================================================================
-test_T57_hm_targetdirs_dotdot_entry_fails() {
-  local output exit_code=0
-  output=$(eval_hm_module "{
-    enable = true;
-    skills = {
-      skill-a = {
-        source = ${FIXTURES_DIR}/valid-skill;
-        subdir = \"sub-a\";
-        targetDirs = [\"../escape\"];
-      };
-    };
-  }" 2>&1) || exit_code=$?
-  output=$(echo "$output" | grep -v "^warning: Nix search path")
-
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: hm module eval should fail for targetDirs entry with ..\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "targetDirs" "error should mention targetDirs"
-  assert_contains "$output" "forbidden" "error should mention forbidden traversal"
-}
-
-# ================================================================
-# T58: hm_targetdirs_empty_element_fails
-# ================================================================
-test_T58_hm_targetdirs_empty_element_fails() {
-  local output exit_code=0
-  output=$(eval_hm_module "{
-    enable = true;
-    skills = {
-      skill-a = {
-        source = ${FIXTURES_DIR}/valid-skill;
-        subdir = \"sub-a\";
-        targetDirs = [\"\"];
-      };
-    };
-  }" 2>&1) || exit_code=$?
-  output=$(echo "$output" | grep -v "^warning: Nix search path")
-
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: hm module eval should fail for empty targetDirs entry\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "targetDirs" "error should mention targetDirs"
-  assert_contains "$output" "cannot be empty" "error should mention empty entry"
-}
-
-# ================================================================
-# T59: hm_targetdirs_normalized_duplicate_fails
-# ================================================================
-test_T59_hm_targetdirs_normalized_duplicate_fails() {
-  local output exit_code=0
-  output=$(eval_hm_module "{
-    enable = true;
-    skills = {
-      skill-a = {
-        source = ${FIXTURES_DIR}/valid-skill;
-        subdir = \"sub-a\";
-        targetDirs = [\".agents/skills\" \"./.agents/skills\" \".agents/skills/\"];
-      };
-    };
-  }" 2>&1) || exit_code=$?
-  output=$(echo "$output" | grep -v "^warning: Nix search path")
-
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: hm module eval should fail for duplicate normalized targetDirs entries\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "targetDirs" "error should mention targetDirs"
-  assert_contains "$output" "duplicate" "error should mention duplicate entries"
+test_T52_hm_targetdir_targetdirs_validation_matrix() {
+  assert_hm_single_skill_fails "targetDir rejects list values" '      targetDir = ["list"];' "targetDir" "type"
+  assert_hm_single_skill_fails "targetDirs rejects string values" '      targetDirs = ".agents/skills";' "targetDirs" "list"
+  assert_hm_single_skill_fails "targetDir + targetDirs are mutually exclusive" '
+      targetDir = ".agents/skills";
+      targetDirs = [".claude/skills"];
+  ' "both" "targetDirs"
+  assert_hm_single_skill_fails "targetDirs rejects empty list" '      targetDirs = [];' "empty" "targetDirs"
+  assert_hm_single_skill_fails "targetDirs rejects absolute entries" '      targetDirs = ["/etc/skills"];' "targetDirs" "relative"
+  assert_hm_single_skill_fails "targetDirs rejects traversal entries" '      targetDirs = ["../escape"];' "targetDirs" "forbidden"
+  assert_hm_single_skill_fails "targetDirs rejects empty entries" '      targetDirs = [""];' "targetDirs" "cannot be empty"
+  assert_hm_single_skill_fails "targetDirs rejects normalized duplicates" '      targetDirs = [".agents/skills" "./.agents/skills" ".agents/skills/"];' "targetDirs" "duplicate"
 }
 
 # ================================================================
@@ -2311,167 +2034,63 @@ test_T63_nix_enabled_disabled_destination_overlap_fails() {
 }
 
 # ================================================================
-# T64: nix_explicit_name_empty_fails
+# T64: nix_explicit_name_validation_matrix
 # ================================================================
-test_T64_nix_explicit_name_empty_fails() {
-  local output exit_code=0
-  output=$(nix eval --impure --raw --expr '
-    let
-      pkgs = import <nixpkgs> {};
-      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
-      drv = mkDeploySkills {
-        inherit pkgs;
-        skills = {
-          bad = {
-            source = '"$REPO_ROOT"'/tests/fixtures/valid-skill;
-            subdir = "sub-a";
-            name = "";
-          };
-        };
+test_T64_nix_explicit_name_validation_matrix() {
+  assert_mkdeployskills_fails "explicit name cannot be empty" '
+      bad = {
+        source = ./.;
+        subdir = "tests/fixtures/valid-skill/sub-a";
+        name = "";
       };
-    in builtins.toJSON drv.drvAttrs
-  ' 2>&1) || exit_code=$?
+  ' "explicit 'name'" "empty"
 
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: nix eval should fail for empty explicit name\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "explicit 'name'" "error should mention explicit name"
-  assert_contains "$output" "empty" "error should mention empty"
+  assert_mkdeployskills_fails "explicit name cannot be '.'" '
+      bad = {
+        source = ./.;
+        subdir = "tests/fixtures/valid-skill/sub-a";
+        name = ".";
+      };
+  ' "explicit 'name' '.'" "forbidden"
+
+  assert_mkdeployskills_fails "explicit name cannot be '..'" '
+      bad = {
+        source = ./.;
+        subdir = "tests/fixtures/valid-skill/sub-a";
+        name = "..";
+      };
+  ' "explicit 'name' '..'" "forbidden"
+
+  assert_mkdeployskills_fails "explicit name cannot contain '/'" '
+      bad = {
+        source = ./.;
+        subdir = "tests/fixtures/valid-skill/sub-a";
+        name = "bad/name";
+      };
+  ' "explicit 'name' 'bad/name'" "containing '/'"
+
+  assert_mkdeployskills_fails "explicit name cannot contain @@" '
+      bad = {
+        source = ./.;
+        subdir = "tests/fixtures/valid-skill/sub-a";
+        name = "bad@@name";
+      };
+  ' "explicit 'name' 'bad@@name'" "containing '@@'"
 }
 
 # ================================================================
-# T65: nix_explicit_name_dot_fails
+# T69: runtime_name_override_paths_and_markers
 # ================================================================
-test_T65_nix_explicit_name_dot_fails() {
-  local output exit_code=0
-  output=$(nix eval --impure --raw --expr '
-    let
-      pkgs = import <nixpkgs> {};
-      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
-      drv = mkDeploySkills {
-        inherit pkgs;
-        skills = {
-          bad = {
-            source = '"$REPO_ROOT"'/tests/fixtures/valid-skill;
-            subdir = "sub-a";
-            name = ".";
-          };
-        };
-      };
-    in builtins.toJSON drv.drvAttrs
-  ' 2>&1) || exit_code=$?
+test_T69_runtime_name_override_paths_and_markers() {
+  run_single_target_case() {
+    local workdir
+    workdir=$(mktemp -d)
+    trap "rm -rf \"$workdir\"" RETURN
 
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: nix eval should fail for explicit name '.'\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "explicit 'name' '.'" "error should mention '.'"
-  assert_contains "$output" "forbidden" "error should mention forbidden"
-}
+    touch "$workdir/flake.nix"
+    cp -R "$FIXTURES_DIR/valid-skill/sub-a" "$workdir/source-skill"
 
-# ================================================================
-# T66: nix_explicit_name_dotdot_fails
-# ================================================================
-test_T66_nix_explicit_name_dotdot_fails() {
-  local output exit_code=0
-  output=$(nix eval --impure --raw --expr '
-    let
-      pkgs = import <nixpkgs> {};
-      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
-      drv = mkDeploySkills {
-        inherit pkgs;
-        skills = {
-          bad = {
-            source = '"$REPO_ROOT"'/tests/fixtures/valid-skill;
-            subdir = "sub-a";
-            name = "..";
-          };
-        };
-      };
-    in builtins.toJSON drv.drvAttrs
-  ' 2>&1) || exit_code=$?
-
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: nix eval should fail for explicit name '..'\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "explicit 'name' '..'" "error should mention '..'"
-  assert_contains "$output" "forbidden" "error should mention forbidden"
-}
-
-# ================================================================
-# T67: nix_explicit_name_with_slash_fails
-# ================================================================
-test_T67_nix_explicit_name_with_slash_fails() {
-  local output exit_code=0
-  output=$(nix eval --impure --raw --expr '
-    let
-      pkgs = import <nixpkgs> {};
-      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
-      drv = mkDeploySkills {
-        inherit pkgs;
-        skills = {
-          bad = {
-            source = '"$REPO_ROOT"'/tests/fixtures/valid-skill;
-            subdir = "sub-a";
-            name = "bad/name";
-          };
-        };
-      };
-    in builtins.toJSON drv.drvAttrs
-  ' 2>&1) || exit_code=$?
-
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: nix eval should fail for explicit name containing '/'\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "explicit 'name' 'bad/name'" "error should mention provided name"
-  assert_contains "$output" "containing '/'" "error should mention slash constraint"
-}
-
-# ================================================================
-# T68: nix_explicit_name_with_double_at_fails
-# ================================================================
-test_T68_nix_explicit_name_with_double_at_fails() {
-  local output exit_code=0
-  output=$(nix eval --impure --raw --expr '
-    let
-      pkgs = import <nixpkgs> {};
-      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
-      drv = mkDeploySkills {
-        inherit pkgs;
-        skills = {
-          bad = {
-            source = '"$REPO_ROOT"'/tests/fixtures/valid-skill;
-            subdir = "sub-a";
-            name = "bad@@name";
-          };
-        };
-      };
-    in builtins.toJSON drv.drvAttrs
-  ' 2>&1) || exit_code=$?
-
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: nix eval should fail for explicit name containing @@\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "explicit 'name' 'bad@@name'" "error should mention provided name"
-  assert_contains "$output" "containing '@@'" "error should mention @@ constraint"
-}
-
-# ================================================================
-# T69: runtime_name_override_deploy_path
-# ================================================================
-test_T69_runtime_name_override_deploy_path() {
-  local workdir
-  workdir=$(mktemp -d)
-  trap 'rm -rf "$workdir"' RETURN
-
-  touch "$workdir/flake.nix"
-  cp -R "$FIXTURES_DIR/valid-skill/sub-a" "$workdir/source-skill"
-
-  cat > "$workdir/manifest.json" <<EOF
+    cat > "$workdir/manifest.json" <<EOF
 {
   "original-skill": {
     "name": "renamed-skill",
@@ -2483,58 +2102,26 @@ test_T69_runtime_name_override_deploy_path() {
 }
 EOF
 
-  local exit_code=0
-  run_deploy_capture "$workdir" "$workdir/manifest.json" > /dev/null || exit_code=$?
+    local exit_code=0
+    run_deploy_capture "$workdir" "$workdir/manifest.json" > /dev/null || exit_code=$?
+    assert_eq "$exit_code" 0 "single-target name override deploy should succeed"
+    assert_dir_exists "$workdir/.agents/skills/renamed-skill"
+    assert_not_exists "$workdir/.agents/skills/original-skill"
 
-  assert_eq "$exit_code" 0 "exit code"
-  assert_dir_exists "$workdir/.agents/skills/renamed-skill"
-  assert_not_exists "$workdir/.agents/skills/original-skill"
-}
-
-# ================================================================
-# T70: runtime_name_override_marker_skillname
-# ================================================================
-test_T70_runtime_name_override_marker_skillname() {
-  local workdir
-  workdir=$(mktemp -d)
-  trap 'rm -rf "$workdir"' RETURN
-
-  touch "$workdir/flake.nix"
-  cp -R "$FIXTURES_DIR/valid-skill/sub-a" "$workdir/source-skill"
-
-  cat > "$workdir/manifest.json" <<EOF
-{
-  "original-skill": {
-    "name": "renamed-skill",
-    "mode": "copy",
-    "subdir": "sub-a",
-    "targetDir": ".agents/skills",
-    "sourcePath": "$workdir/source-skill"
+    local marker_name
+    marker_name=$(jq -r '.skillName' "$workdir/.agents/skills/renamed-skill/$MARKER_FILENAME")
+    assert_eq "$marker_name" "renamed-skill" "marker skillName should use resolved single-target name"
   }
-}
-EOF
 
-  local exit_code=0
-  run_deploy_capture "$workdir" "$workdir/manifest.json" > /dev/null || exit_code=$?
+  run_multi_target_case() {
+    local workdir
+    workdir=$(mktemp -d)
+    trap "rm -rf \"$workdir\"" RETURN
 
-  assert_eq "$exit_code" 0 "exit code"
-  local marker_name
-  marker_name=$(jq -r '.skillName' "$workdir/.agents/skills/renamed-skill/$MARKER_FILENAME")
-  assert_eq "$marker_name" "renamed-skill" "marker skillName should use resolved name"
-}
+    touch "$workdir/flake.nix"
+    cp -R "$FIXTURES_DIR/valid-skill/sub-a" "$workdir/source-skill"
 
-# ================================================================
-# T71: runtime_multi_target_with_name_override
-# ================================================================
-test_T71_runtime_multi_target_with_name_override() {
-  local workdir
-  workdir=$(mktemp -d)
-  trap 'rm -rf "$workdir"' RETURN
-
-  touch "$workdir/flake.nix"
-  cp -R "$FIXTURES_DIR/valid-skill/sub-a" "$workdir/source-skill"
-
-  cat > "$workdir/manifest.json" <<EOF
+    cat > "$workdir/manifest.json" <<EOF
 {
   "skill-id@@.agents/skills": {
     "name": "shared-renamed",
@@ -2553,20 +2140,24 @@ test_T71_runtime_multi_target_with_name_override() {
 }
 EOF
 
-  local exit_code=0
-  run_deploy_capture "$workdir" "$workdir/manifest.json" > /dev/null || exit_code=$?
+    local exit_code=0
+    run_deploy_capture "$workdir" "$workdir/manifest.json" > /dev/null || exit_code=$?
 
-  assert_eq "$exit_code" 0 "exit code"
-  assert_file_exists "$workdir/.agents/skills/shared-renamed/SKILL.md"
-  assert_file_exists "$workdir/.claude/skills/shared-renamed/SKILL.md"
-  assert_not_exists "$workdir/.agents/skills/skill-id"
-  assert_not_exists "$workdir/.claude/skills/skill-id"
+    assert_eq "$exit_code" 0 "multi-target name override deploy should succeed"
+    assert_file_exists "$workdir/.agents/skills/shared-renamed/SKILL.md"
+    assert_file_exists "$workdir/.claude/skills/shared-renamed/SKILL.md"
+    assert_not_exists "$workdir/.agents/skills/skill-id"
+    assert_not_exists "$workdir/.claude/skills/skill-id"
+  }
+
+  run_single_target_case
+  run_multi_target_case
 }
 
 # ================================================================
-# T72: runtime_cleanup_disabled_managed_target
+# T72: runtime_cleanup_remove_dryrun_and_noop_contracts
 # ================================================================
-test_T72_runtime_cleanup_disabled_managed_target() {
+test_T72_runtime_cleanup_remove_dryrun_and_noop_contracts() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -2580,7 +2171,8 @@ test_T72_runtime_cleanup_disabled_managed_target() {
   assert_dir_exists "$workdir/.agents/skills/legacy-skill"
 
   echo '{}' > "$workdir/manifest-empty.json"
-  cat > "$workdir/disabled-manifest.json" <<EOF
+
+  cat > "$workdir/disabled-legacy.json" <<EOF
 [
   {
     "name": "legacy-skill",
@@ -2590,33 +2182,54 @@ test_T72_runtime_cleanup_disabled_managed_target() {
 EOF
 
   local output exit_code=0
-  output=$(run_deploy_capture_with_disabled "$workdir" "$workdir/manifest-empty.json" "$workdir/disabled-manifest.json") || exit_code=$?
+  output=$(run_deploy_capture_with_disabled "$workdir" "$workdir/manifest-empty.json" "$workdir/disabled-legacy.json" --dry-run) || exit_code=$?
+  assert_eq "$exit_code" 1 "dry-run should return 1 when cleanup would remove managed destination"
+  assert_contains "$output" "REMOVE .agents/skills/legacy-skill" "dry-run should report REMOVE action"
+  assert_dir_exists "$workdir/.agents/skills/legacy-skill"
 
-  assert_eq "$exit_code" 0 "cleanup run should succeed"
-  assert_contains "$output" "removed disabled destination" "cleanup should remove managed disabled path"
+  exit_code=0
+  output=$(run_deploy_capture_with_disabled "$workdir" "$workdir/manifest-empty.json" "$workdir/disabled-legacy.json") || exit_code=$?
+  assert_eq "$exit_code" 0 "cleanup run should remove managed disabled destination"
   assert_not_exists "$workdir/.agents/skills/legacy-skill"
+  assert_contains "$output" "removed disabled destination" "cleanup should report successful removal"
+
+  cat > "$workdir/disabled-ghost.json" <<EOF
+[
+  {
+    "name": "ghost-skill",
+    "targetDirs": [".agents/skills"]
+  }
+]
+EOF
+
+  exit_code=0
+  output=$(run_deploy_capture_with_disabled "$workdir" "$workdir/manifest-empty.json" "$workdir/disabled-ghost.json") || exit_code=$?
+  assert_eq "$exit_code" 0 "cleanup run should no-op for missing disabled destination"
+  assert_contains "$output" "0 change(s) applied" "missing disabled destination should not count as a change"
+  assert_not_contains "$output" "removed disabled destination" "no-op run should not report removals"
 }
 
 # ================================================================
-# T73: runtime_cleanup_skips_unmanaged_and_marker_mismatch
+# T73: runtime_cleanup_skip_safety_contracts
 # ================================================================
-test_T73_runtime_cleanup_skips_unmanaged_and_marker_mismatch() {
-  local workdir
-  workdir=$(mktemp -d)
-  trap 'rm -rf "$workdir"' RETURN
+test_T73_runtime_cleanup_skip_safety_contracts() {
+  run_unmanaged_and_marker_mismatch_case() {
+    local workdir
+    workdir=$(mktemp -d)
+    trap "rm -rf \"$workdir\"" RETURN
 
-  touch "$workdir/flake.nix"
-  echo '{}' > "$workdir/manifest-empty.json"
+    touch "$workdir/flake.nix"
+    echo '{}' > "$workdir/manifest-empty.json"
 
-  mkdir -p "$workdir/.agents/skills/unmanaged-skill"
-  echo "user content" > "$workdir/.agents/skills/unmanaged-skill/local.txt"
+    mkdir -p "$workdir/.agents/skills/unmanaged-skill"
+    echo "user content" > "$workdir/.agents/skills/unmanaged-skill/local.txt"
 
-  mkdir -p "$workdir/.claude/skills/expected-skill"
-  cat > "$workdir/.claude/skills/expected-skill/$MARKER_FILENAME" <<EOF
+    mkdir -p "$workdir/.claude/skills/expected-skill"
+    cat > "$workdir/.claude/skills/expected-skill/$MARKER_FILENAME" <<EOF
 {"version":"1","skillName":"other-skill","mode":"copy","sourcePath":"/tmp/source","deployedAt":"2026-02-01T00:00:00Z"}
 EOF
 
-  cat > "$workdir/disabled-manifest.json" <<EOF
+    cat > "$workdir/disabled-skip-checks.json" <<EOF
 [
   {
     "name": "unmanaged-skill",
@@ -2629,30 +2242,26 @@ EOF
 ]
 EOF
 
-  local output exit_code=0
-  output=$(run_deploy_capture_with_disabled "$workdir" "$workdir/manifest-empty.json" "$workdir/disabled-manifest.json") || exit_code=$?
+    local output exit_code=0
+    output=$(run_deploy_capture_with_disabled "$workdir" "$workdir/manifest-empty.json" "$workdir/disabled-skip-checks.json") || exit_code=$?
+    assert_eq "$exit_code" 0 "cleanup run should not fail when unmanaged/marker mismatch destinations are present"
+    assert_contains "$output" "Skipping cleanup for unmanaged path '.agents/skills/unmanaged-skill'" "unmanaged destination should be preserved"
+    assert_contains "$output" "marker skillName 'other-skill' does not match expected 'expected-skill'" "marker mismatch should be preserved"
+    assert_dir_exists "$workdir/.agents/skills/unmanaged-skill"
+    assert_dir_exists "$workdir/.claude/skills/expected-skill"
+  }
 
-  assert_eq "$exit_code" 0 "cleanup run should succeed"
-  assert_contains "$output" "Skipping cleanup for unmanaged path '.agents/skills/unmanaged-skill'" "should warn for unmanaged path"
-  assert_contains "$output" "marker skillName 'other-skill' does not match expected 'expected-skill'" "should warn for marker mismatch"
-  assert_dir_exists "$workdir/.agents/skills/unmanaged-skill"
-  assert_dir_exists "$workdir/.claude/skills/expected-skill"
-}
+  run_enabled_destination_skip_case() {
+    local workdir
+    workdir=$(mktemp -d)
+    trap "rm -rf \"$workdir\"" RETURN
 
-# ================================================================
-# T74: runtime_cleanup_skips_currently_enabled_destination
-# ================================================================
-test_T74_runtime_cleanup_skips_currently_enabled_destination() {
-  local workdir
-  workdir=$(mktemp -d)
-  trap 'rm -rf "$workdir"' RETURN
+    touch "$workdir/flake.nix"
+    cp -R "$FIXTURES_DIR/valid-skill/sub-a" "$workdir/source-skill"
+    make_manifest "shared-skill" "$workdir/source-skill" "copy" ".agents/skills" "sub-a" \
+      > "$workdir/manifest-enabled.json"
 
-  touch "$workdir/flake.nix"
-  cp -R "$FIXTURES_DIR/valid-skill/sub-a" "$workdir/source-skill"
-
-  make_manifest "shared-skill" "$workdir/source-skill" "copy" ".agents/skills" "sub-a" \
-    > "$workdir/manifest-enabled.json"
-  cat > "$workdir/disabled-manifest.json" <<EOF
+    cat > "$workdir/disabled-enabled-same-destination.json" <<EOF
 [
   {
     "name": "shared-skill",
@@ -2661,73 +2270,52 @@ test_T74_runtime_cleanup_skips_currently_enabled_destination() {
 ]
 EOF
 
-  local output exit_code=0
-  output=$(run_deploy_capture_with_disabled "$workdir" "$workdir/manifest-enabled.json" "$workdir/disabled-manifest.json") || exit_code=$?
+    local output exit_code=0
+    output=$(run_deploy_capture_with_disabled "$workdir" "$workdir/manifest-enabled.json" "$workdir/disabled-enabled-same-destination.json") || exit_code=$?
+    assert_eq "$exit_code" 0 "cleanup should skip destinations that are enabled in the same run"
+    assert_contains "$output" "Skipping disabled cleanup for '.agents/skills/shared-skill' because it is enabled in this run." "enabled destination should be protected from cleanup"
+    assert_dir_exists "$workdir/.agents/skills/shared-skill"
+  }
 
-  assert_eq "$exit_code" 0 "run should succeed"
-  assert_contains "$output" "Skipping disabled cleanup for '.agents/skills/shared-skill' because it is enabled in this run." "cleanup should skip enabled destination"
-  assert_dir_exists "$workdir/.agents/skills/shared-skill"
+  run_canonicalized_enabled_destination_skip_case() {
+    local workdir
+    workdir=$(mktemp -d)
+    trap "rm -rf \"$workdir\"" RETURN
+
+    touch "$workdir/flake.nix"
+    cp -R "$FIXTURES_DIR/valid-skill/sub-a" "$workdir/source-skill"
+
+    cat > "$workdir/manifest-canonical-enabled.json" <<EOF
+{
+  "canonical-skill": {
+    "name": "canonical-skill",
+    "mode": "copy",
+    "subdir": "sub-a",
+    "targetDir": "./.agents/skills/",
+    "sourcePath": "$workdir/source-skill"
+  }
 }
+EOF
 
-# ================================================================
-# T75: runtime_cleanup_dry_run_reports_remove
-# ================================================================
-test_T75_runtime_cleanup_dry_run_reports_remove() {
-  local workdir
-  workdir=$(mktemp -d)
-  trap 'rm -rf "$workdir"' RETURN
-
-  touch "$workdir/flake.nix"
-  cp -R "$FIXTURES_DIR/valid-skill/sub-a" "$workdir/source-skill"
-
-  make_manifest "legacy-skill" "$workdir/source-skill" "copy" ".agents/skills" "sub-a" \
-    > "$workdir/manifest-enabled.json"
-  run_deploy_capture "$workdir" "$workdir/manifest-enabled.json" > /dev/null
-  assert_dir_exists "$workdir/.agents/skills/legacy-skill"
-
-  echo '{}' > "$workdir/manifest-empty.json"
-  cat > "$workdir/disabled-manifest.json" <<EOF
+    cat > "$workdir/disabled-manifest.json" <<EOF
 [
   {
-    "name": "legacy-skill",
-    "targetDirs": [".agents/skills"]
+    "name": "canonical-skill",
+    "targetDirs": ["././.agents/skills///"]
   }
 ]
 EOF
 
-  local output exit_code=0
-  output=$(run_deploy_capture_with_disabled "$workdir" "$workdir/manifest-empty.json" "$workdir/disabled-manifest.json" --dry-run) || exit_code=$?
-
-  assert_eq "$exit_code" 1 "dry-run should exit 1 when cleanup is pending"
-  assert_contains "$output" "REMOVE .agents/skills/legacy-skill" "dry-run should list REMOVE action"
-  assert_dir_exists "$workdir/.agents/skills/legacy-skill"
-}
-
-# ================================================================
-# T76: runtime_cleanup_nonexistent_target_noop
-# ================================================================
-test_T76_runtime_cleanup_nonexistent_target_noop() {
-  local workdir
-  workdir=$(mktemp -d)
-  trap 'rm -rf "$workdir"' RETURN
-
-  touch "$workdir/flake.nix"
-  echo '{}' > "$workdir/manifest-empty.json"
-  cat > "$workdir/disabled-manifest.json" <<EOF
-[
-  {
-    "name": "ghost-skill",
-    "targetDirs": [".agents/skills"]
+    local output exit_code=0
+    output=$(run_deploy_capture_with_disabled "$workdir" "$workdir/manifest-canonical-enabled.json" "$workdir/disabled-manifest.json") || exit_code=$?
+    assert_eq "$exit_code" 0 "cleanup should skip canonicalized equivalent enabled destination"
+    assert_contains "$output" "Skipping disabled cleanup for '.agents/skills/canonical-skill' because it is enabled in this run." "canonical equivalent enabled destination should be protected"
+    assert_dir_exists "$workdir/.agents/skills/canonical-skill"
   }
-]
-EOF
 
-  local output exit_code=0
-  output=$(run_deploy_capture_with_disabled "$workdir" "$workdir/manifest-empty.json" "$workdir/disabled-manifest.json") || exit_code=$?
-
-  assert_eq "$exit_code" 0 "cleanup run should succeed"
-  assert_contains "$output" "0 change(s) applied" "nonexistent disabled destination should be no-op"
-  assert_not_contains "$output" "removed disabled destination" "should not remove anything"
+  run_unmanaged_and_marker_mismatch_case
+  run_enabled_destination_skip_case
+  run_canonicalized_enabled_destination_skip_case
 }
 
 # ================================================================
@@ -2841,128 +2429,14 @@ test_T79_hm_default_name_path_when_name_omitted() {
 }
 
 # ================================================================
-# T80: hm_invalid_name_empty_fails
+# T80: hm_invalid_name_validation_matrix
 # ================================================================
-test_T80_hm_invalid_name_empty_fails() {
-  local output exit_code=0
-  output=$(eval_hm_module "{
-    enable = true;
-    skills = {
-      skill-a = {
-        name = \"\";
-        source = ${FIXTURES_DIR}/valid-skill;
-        subdir = \"sub-a\";
-      };
-    };
-  }" 2>&1) || exit_code=$?
-  output=$(echo "$output" | grep -v "^warning: Nix search path")
-
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: hm module eval should fail for empty explicit name\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "invalid 'name'" "error should mention invalid name"
-  assert_contains "$output" "cannot be empty" "error should mention empty name"
-}
-
-# ================================================================
-# T81: hm_invalid_name_dot_fails
-# ================================================================
-test_T81_hm_invalid_name_dot_fails() {
-  local output exit_code=0
-  output=$(eval_hm_module "{
-    enable = true;
-    skills = {
-      skill-a = {
-        name = \".\";
-        source = ${FIXTURES_DIR}/valid-skill;
-        subdir = \"sub-a\";
-      };
-    };
-  }" 2>&1) || exit_code=$?
-  output=$(echo "$output" | grep -v "^warning: Nix search path")
-
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: hm module eval should fail for explicit name '.'\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "invalid 'name'" "error should mention invalid name"
-  assert_contains "$output" "forbidden" "error should mention forbidden values"
-}
-
-# ================================================================
-# T82: hm_invalid_name_dotdot_fails
-# ================================================================
-test_T82_hm_invalid_name_dotdot_fails() {
-  local output exit_code=0
-  output=$(eval_hm_module "{
-    enable = true;
-    skills = {
-      skill-a = {
-        name = \"..\";
-        source = ${FIXTURES_DIR}/valid-skill;
-        subdir = \"sub-a\";
-      };
-    };
-  }" 2>&1) || exit_code=$?
-  output=$(echo "$output" | grep -v "^warning: Nix search path")
-
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: hm module eval should fail for explicit name '..'\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "invalid 'name'" "error should mention invalid name"
-  assert_contains "$output" "forbidden" "error should mention forbidden values"
-}
-
-# ================================================================
-# T83: hm_invalid_name_slash_fails
-# ================================================================
-test_T83_hm_invalid_name_slash_fails() {
-  local output exit_code=0
-  output=$(eval_hm_module "{
-    enable = true;
-    skills = {
-      skill-a = {
-        name = \"bad/name\";
-        source = ${FIXTURES_DIR}/valid-skill;
-        subdir = \"sub-a\";
-      };
-    };
-  }" 2>&1) || exit_code=$?
-  output=$(echo "$output" | grep -v "^warning: Nix search path")
-
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: hm module eval should fail for explicit name containing '/'\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "invalid 'name'" "error should mention invalid name"
-  assert_contains "$output" "'/' is forbidden" "error should mention slash is forbidden"
-}
-
-# ================================================================
-# T84: hm_invalid_name_double_at_fails
-# ================================================================
-test_T84_hm_invalid_name_double_at_fails() {
-  local output exit_code=0
-  output=$(eval_hm_module "{
-    enable = true;
-    skills = {
-      skill-a = {
-        name = \"bad@@name\";
-        source = ${FIXTURES_DIR}/valid-skill;
-        subdir = \"sub-a\";
-      };
-    };
-  }" 2>&1) || exit_code=$?
-  output=$(echo "$output" | grep -v "^warning: Nix search path")
-
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: hm module eval should fail for explicit name containing @@\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "invalid 'name'" "error should mention invalid name"
-  assert_contains "$output" "'@@' is forbidden" "error should mention @@ is forbidden"
+test_T80_hm_invalid_name_validation_matrix() {
+  assert_hm_single_skill_fails "explicit HM name cannot be empty" '      name = "";' "invalid 'name'" "cannot be empty"
+  assert_hm_single_skill_fails "explicit HM name cannot be '.'" '      name = ".";' "invalid 'name'" "forbidden"
+  assert_hm_single_skill_fails "explicit HM name cannot be '..'" '      name = "..";' "invalid 'name'" "forbidden"
+  assert_hm_single_skill_fails "explicit HM name cannot contain '/'" '      name = "bad/name";' "invalid 'name'" "'/' is forbidden"
+  assert_hm_single_skill_fails "explicit HM name cannot contain @@" '      name = "bad@@name";' "invalid 'name'" "'@@' is forbidden"
 }
 
 # ================================================================
@@ -3017,7 +2491,7 @@ test_T86_hm_enabled_destination_collision_fails() {
       };
     };
   }" 2>&1) || exit_code=$?
-  output=$(echo "$output" | grep -v "^warning: Nix search path")
+  output=$(strip_nix_search_path_warnings "$output")
 
   if [[ "$exit_code" -eq 0 ]]; then
     printf "    ASSERT FAILED: hm module eval should fail for enabled destination collision\n" >&2
@@ -3028,202 +2502,68 @@ test_T86_hm_enabled_destination_collision_fails() {
 }
 
 # ================================================================
-# T87: nix_enabled_destination_collision_canonicalized_dirs_fails
+# T87: nix_canonicalized_destination_conflict_matrix
 # ================================================================
-test_T87_nix_enabled_destination_collision_canonicalized_dirs_fails() {
-  local output exit_code=0
-  output=$(nix eval --impure --raw --expr '
-    let
-      pkgs = import <nixpkgs> {};
-      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
-      drv = mkDeploySkills {
-        inherit pkgs;
-        skills = {
-          first = {
-            source = '"$REPO_ROOT"'/tests/fixtures/valid-skill;
-            subdir = "sub-a";
-            targetDir = "././.agents/skills/";
-            name = "same-destination";
-          };
-          second = {
-            source = '"$REPO_ROOT"'/tests/fixtures/valid-skill;
-            subdir = "sub-b";
-            targetDir = ".agents/skills///";
-            name = "same-destination";
-          };
-        };
+test_T87_nix_canonicalized_destination_conflict_matrix() {
+  assert_mkdeployskills_fails "enabled destination collision after canonicalization" '
+      first = {
+        source = ./.;
+        subdir = "tests/fixtures/valid-skill/sub-a";
+        targetDir = "././.agents/skills/";
+        name = "same-destination";
       };
-    in builtins.toJSON drv.drvAttrs
-  ' 2>&1) || exit_code=$?
-
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: nix eval should fail for canonicalized enabled destination collision\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "colliding destinations" "should mention destination collision"
-}
-
-# ================================================================
-# T88: nix_enabled_disabled_overlap_canonicalized_dirs_fails
-# ================================================================
-test_T88_nix_enabled_disabled_overlap_canonicalized_dirs_fails() {
-  local output exit_code=0
-  output=$(nix eval --impure --raw --expr '
-    let
-      pkgs = import <nixpkgs> {};
-      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
-      drv = mkDeploySkills {
-        inherit pkgs;
-        skills = {
-          active = {
-            source = '"$REPO_ROOT"'/tests/fixtures/valid-skill;
-            subdir = "sub-a";
-            targetDir = "././.agents/skills/";
-            name = "shared-dest";
-          };
-          inactive = {
-            source = '"$REPO_ROOT"'/tests/fixtures/valid-skill;
-            subdir = "sub-a";
-            targetDir = ".agents/skills///";
-            name = "shared-dest";
-            enable = false;
-          };
-        };
+      second = {
+        source = ./.;
+        subdir = "tests/fixtures/valid-skill/sub-b";
+        targetDir = ".agents/skills///";
+        name = "same-destination";
       };
-    in builtins.toJSON drv.drvAttrs
-  ' 2>&1) || exit_code=$?
+  ' "colliding destinations"
 
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: nix eval should fail for canonicalized enabled/disabled overlap\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "enabled and disabled skills overlap" "should mention overlap"
-}
-
-# ================================================================
-# T89: nix_disabled_skill_invalid_mode_still_fails
-# ================================================================
-test_T89_nix_disabled_skill_invalid_mode_still_fails() {
-  local output exit_code=0
-  output=$(nix eval --impure --raw --expr '
-    let
-      pkgs = import <nixpkgs> {};
-      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
-      drv = mkDeploySkills {
-        inherit pkgs;
-        skills = {
-          bad-disabled = {
-            source = '"$REPO_ROOT"'/tests/fixtures/valid-skill;
-            subdir = "sub-a";
-            mode = "invalid-mode";
-            enable = false;
-          };
-        };
+  assert_mkdeployskills_fails "enabled and disabled overlap after canonicalization" '
+      active = {
+        source = ./.;
+        subdir = "tests/fixtures/valid-skill/sub-a";
+        targetDir = "././.agents/skills/";
+        name = "shared-dest";
       };
-    in builtins.toJSON drv.drvAttrs
-  ' 2>&1) || exit_code=$?
-
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: nix eval should fail for disabled skill with invalid mode\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "invalid mode" "error should mention invalid mode"
-}
-
-# ================================================================
-# T90: nix_disabled_skill_invalid_subdir_still_fails
-# ================================================================
-test_T90_nix_disabled_skill_invalid_subdir_still_fails() {
-  local output exit_code=0
-  output=$(nix eval --impure --raw --expr '
-    let
-      pkgs = import <nixpkgs> {};
-      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
-      drv = mkDeploySkills {
-        inherit pkgs;
-        skills = {
-          bad-disabled = {
-            source = '"$REPO_ROOT"'/tests/fixtures/valid-skill;
-            subdir = "../escape";
-            enable = false;
-          };
-        };
+      inactive = {
+        source = ./.;
+        subdir = "tests/fixtures/valid-skill/sub-a";
+        targetDir = ".agents/skills///";
+        name = "shared-dest";
+        enable = false;
       };
-    in builtins.toJSON drv.drvAttrs
-  ' 2>&1) || exit_code=$?
-
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: nix eval should fail for disabled skill with invalid subdir\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "forbidden" "error should mention forbidden traversal"
+  ' "enabled and disabled skills overlap"
 }
 
 # ================================================================
-# T91: nix_disabled_skill_missing_required_field_still_fails
+# T89: nix_disabled_skill_validation_matrix
 # ================================================================
-test_T91_nix_disabled_skill_missing_required_field_still_fails() {
-  local output exit_code=0
-  output=$(nix eval --impure --raw --expr '
-    let
-      pkgs = import <nixpkgs> {};
-      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
-      drv = mkDeploySkills {
-        inherit pkgs;
-        skills = {
-          bad-disabled = {
-            source = '"$REPO_ROOT"'/tests/fixtures/valid-skill;
-            enable = false;
-          };
-        };
+test_T89_nix_disabled_skill_validation_matrix() {
+  assert_mkdeployskills_fails "disabled skill still validates mode" '
+      bad-disabled = {
+        source = ./.;
+        subdir = "tests/fixtures/valid-skill/sub-a";
+        mode = "invalid-mode";
+        enable = false;
       };
-    in builtins.toJSON drv.drvAttrs
-  ' 2>&1) || exit_code=$?
+  ' "invalid mode"
 
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: nix eval should fail for disabled skill missing required fields\n" >&2
-    return 1
-  fi
-  assert_contains "$output" "missing required field 'subdir'" "error should mention missing required field"
-}
+  assert_mkdeployskills_fails "disabled skill still validates subdir" '
+      bad-disabled = {
+        source = ./.;
+        subdir = "../escape";
+        enable = false;
+      };
+  ' "forbidden"
 
-# ================================================================
-# T92: runtime_cleanup_skip_guard_canonicalized_equivalent_dirs
-# ================================================================
-test_T92_runtime_cleanup_skip_guard_canonicalized_equivalent_dirs() {
-  local workdir
-  workdir=$(mktemp -d)
-  trap 'rm -rf "$workdir"' RETURN
-
-  touch "$workdir/flake.nix"
-  cp -R "$FIXTURES_DIR/valid-skill/sub-a" "$workdir/source-skill"
-
-  cat > "$workdir/manifest-enabled.json" <<EOF
-{
-  "shared-skill": {
-    "name": "shared-skill",
-    "mode": "copy",
-    "subdir": "sub-a",
-    "targetDir": "./.agents/skills/",
-    "sourcePath": "$workdir/source-skill"
-  }
-}
-EOF
-  cat > "$workdir/disabled-manifest.json" <<EOF
-[
-  {
-    "name": "shared-skill",
-    "targetDirs": ["././.agents/skills///"]
-  }
-]
-EOF
-
-  local output exit_code=0
-  output=$(run_deploy_capture_with_disabled "$workdir" "$workdir/manifest-enabled.json" "$workdir/disabled-manifest.json") || exit_code=$?
-
-  assert_eq "$exit_code" 0 "run should succeed"
-  assert_contains "$output" "Skipping disabled cleanup for '.agents/skills/shared-skill' because it is enabled in this run." "cleanup should skip canonical equivalent enabled destination"
-  assert_dir_exists "$workdir/.agents/skills/shared-skill"
+  assert_mkdeployskills_fails "disabled skill still validates required fields" '
+      bad-disabled = {
+        source = ./.;
+        enable = false;
+      };
+  ' "missing required field 'subdir'"
 }
 
 # ================================================================
@@ -3248,7 +2588,7 @@ test_T93_hm_enabled_destination_collision_canonicalized_dirs_fails() {
       };
     };
   }" 2>&1) || exit_code=$?
-  output=$(echo "$output" | grep -v "^warning: Nix search path")
+  output=$(strip_nix_search_path_warnings "$output")
 
   if [[ "$exit_code" -eq 0 ]]; then
     printf "    ASSERT FAILED: hm module eval should fail for canonicalized destination collision\n" >&2
@@ -3301,16 +2641,10 @@ run_test test_T28_multi_target_dry_run
 run_test test_T29_multi_target_mixed_with_single
 run_test test_T30_multi_target_marker_name
 if [[ -n "$IN_NIX_SANDBOX" || "$NIX_EVAL_AVAILABLE" != "true" ]]; then
-  skip_test test_T31_nix_targetdirs_mutual_exclusion "requires nix eval --impure"
-  skip_test test_T31b_nix_targetdirs_empty "requires nix eval --impure"
-  skip_test test_T31c_nix_targetdirs_absolute_path "requires nix eval --impure"
-  skip_test test_T31d_nix_targetdirs_dotdot "requires nix eval --impure"
+  skip_test test_T31_nix_targetdirs_validation_matrix "requires nix eval --impure"
   skip_test test_T32_nix_targetdirs_expansion "requires nix eval --impure"
 else
-  run_test test_T31_nix_targetdirs_mutual_exclusion
-  run_test test_T31b_nix_targetdirs_empty
-  run_test test_T31c_nix_targetdirs_absolute_path
-  run_test test_T31d_nix_targetdirs_dotdot
+  run_test test_T31_nix_targetdirs_validation_matrix
   run_test test_T32_nix_targetdirs_expansion
 fi
 run_test test_T33_multi_target_single_entry
@@ -3319,17 +2653,9 @@ run_test test_T35_multi_target_source_drift
 if [[ -n "$IN_NIX_SANDBOX" || "$NIX_EVAL_AVAILABLE" != "true" ]]; then
   skip_test test_T36_nix_skill_name_with_at_signs "requires nix eval --impure"
   skip_test test_T37_nix_manifest_key_collision "requires nix eval --impure"
-  skip_test test_T38_nix_targetdirs_empty_element "requires nix eval --impure"
-  skip_test test_T39_nix_targetdirs_path_normalization "requires nix eval --impure"
-  skip_test test_T40_nix_targetdir_wrong_type "requires nix eval --impure"
-  skip_test test_T41_nix_targetdirs_wrong_type "requires nix eval --impure"
 else
   run_test test_T36_nix_skill_name_with_at_signs
   run_test test_T37_nix_manifest_key_collision
-  run_test test_T38_nix_targetdirs_empty_element
-  run_test test_T39_nix_targetdirs_path_normalization
-  run_test test_T40_nix_targetdir_wrong_type
-  run_test test_T41_nix_targetdirs_wrong_type
 fi
 if [[ -n "$IN_NIX_SANDBOX" || "$NIX_EVAL_AVAILABLE" != "true" ]]; then
   skip_test test_T42_hm_disabled_empty "requires nix eval --impure"
@@ -3342,28 +2668,14 @@ if [[ -n "$IN_NIX_SANDBOX" || "$NIX_EVAL_AVAILABLE" != "true" ]]; then
   skip_test test_T49_hm_missing_subdir_fails "requires nix eval --impure"
   skip_test test_T50_hm_source_wrong_type_fails "requires nix eval --impure"
   skip_test test_T51_hm_targetdirs_multi_target "requires nix eval --impure"
-  skip_test test_T52_hm_targetdir_wrong_type_fails "requires nix eval --impure"
-  skip_test test_T53_hm_targetdirs_wrong_type_fails "requires nix eval --impure"
-  skip_test test_T54_hm_targetdir_targetdirs_mutual_exclusion_fails "requires nix eval --impure"
-  skip_test test_T55_hm_targetdirs_empty_list_fails "requires nix eval --impure"
-  skip_test test_T56_hm_targetdirs_absolute_entry_fails "requires nix eval --impure"
-  skip_test test_T57_hm_targetdirs_dotdot_entry_fails "requires nix eval --impure"
-  skip_test test_T58_hm_targetdirs_empty_element_fails "requires nix eval --impure"
-  skip_test test_T59_hm_targetdirs_normalized_duplicate_fails "requires nix eval --impure"
+  skip_test test_T52_hm_targetdir_targetdirs_validation_matrix "requires nix eval --impure"
   skip_test test_T60_nix_name_override_reflected_in_manifest "requires nix eval --impure"
   skip_test test_T61_nix_enable_false_reflected_in_disabled_payload "requires nix eval --impure"
   skip_test test_T62_nix_enabled_destination_collision_fails "requires nix eval --impure"
   skip_test test_T63_nix_enabled_disabled_destination_overlap_fails "requires nix eval --impure"
-  skip_test test_T64_nix_explicit_name_empty_fails "requires nix eval --impure"
-  skip_test test_T65_nix_explicit_name_dot_fails "requires nix eval --impure"
-  skip_test test_T66_nix_explicit_name_dotdot_fails "requires nix eval --impure"
-  skip_test test_T67_nix_explicit_name_with_slash_fails "requires nix eval --impure"
-  skip_test test_T68_nix_explicit_name_with_double_at_fails "requires nix eval --impure"
-  skip_test test_T87_nix_enabled_destination_collision_canonicalized_dirs_fails "requires nix eval --impure"
-  skip_test test_T88_nix_enabled_disabled_overlap_canonicalized_dirs_fails "requires nix eval --impure"
-  skip_test test_T89_nix_disabled_skill_invalid_mode_still_fails "requires nix eval --impure"
-  skip_test test_T90_nix_disabled_skill_invalid_subdir_still_fails "requires nix eval --impure"
-  skip_test test_T91_nix_disabled_skill_missing_required_field_still_fails "requires nix eval --impure"
+  skip_test test_T64_nix_explicit_name_validation_matrix "requires nix eval --impure"
+  skip_test test_T87_nix_canonicalized_destination_conflict_matrix "requires nix eval --impure"
+  skip_test test_T89_nix_disabled_skill_validation_matrix "requires nix eval --impure"
 else
   run_test test_T42_hm_disabled_empty
   run_test test_T43_hm_enabled_empty_skills
@@ -3375,60 +2687,32 @@ else
   run_test test_T49_hm_missing_subdir_fails
   run_test test_T50_hm_source_wrong_type_fails
   run_test test_T51_hm_targetdirs_multi_target
-  run_test test_T52_hm_targetdir_wrong_type_fails
-  run_test test_T53_hm_targetdirs_wrong_type_fails
-  run_test test_T54_hm_targetdir_targetdirs_mutual_exclusion_fails
-  run_test test_T55_hm_targetdirs_empty_list_fails
-  run_test test_T56_hm_targetdirs_absolute_entry_fails
-  run_test test_T57_hm_targetdirs_dotdot_entry_fails
-  run_test test_T58_hm_targetdirs_empty_element_fails
-  run_test test_T59_hm_targetdirs_normalized_duplicate_fails
+  run_test test_T52_hm_targetdir_targetdirs_validation_matrix
   run_test test_T60_nix_name_override_reflected_in_manifest
   run_test test_T61_nix_enable_false_reflected_in_disabled_payload
   run_test test_T62_nix_enabled_destination_collision_fails
   run_test test_T63_nix_enabled_disabled_destination_overlap_fails
-  run_test test_T64_nix_explicit_name_empty_fails
-  run_test test_T65_nix_explicit_name_dot_fails
-  run_test test_T66_nix_explicit_name_dotdot_fails
-  run_test test_T67_nix_explicit_name_with_slash_fails
-  run_test test_T68_nix_explicit_name_with_double_at_fails
-  run_test test_T87_nix_enabled_destination_collision_canonicalized_dirs_fails
-  run_test test_T88_nix_enabled_disabled_overlap_canonicalized_dirs_fails
-  run_test test_T89_nix_disabled_skill_invalid_mode_still_fails
-  run_test test_T90_nix_disabled_skill_invalid_subdir_still_fails
-  run_test test_T91_nix_disabled_skill_missing_required_field_still_fails
+  run_test test_T64_nix_explicit_name_validation_matrix
+  run_test test_T87_nix_canonicalized_destination_conflict_matrix
+  run_test test_T89_nix_disabled_skill_validation_matrix
 fi
 
-run_test test_T69_runtime_name_override_deploy_path
-run_test test_T70_runtime_name_override_marker_skillname
-run_test test_T71_runtime_multi_target_with_name_override
-run_test test_T72_runtime_cleanup_disabled_managed_target
-run_test test_T73_runtime_cleanup_skips_unmanaged_and_marker_mismatch
-run_test test_T74_runtime_cleanup_skips_currently_enabled_destination
-run_test test_T75_runtime_cleanup_dry_run_reports_remove
-run_test test_T76_runtime_cleanup_nonexistent_target_noop
+run_test test_T69_runtime_name_override_paths_and_markers
+run_test test_T72_runtime_cleanup_remove_dryrun_and_noop_contracts
+run_test test_T73_runtime_cleanup_skip_safety_contracts
 run_test test_T77_runtime_lifecycle_enable_disable_reenable
-run_test test_T92_runtime_cleanup_skip_guard_canonicalized_equivalent_dirs
 
 if [[ -n "$IN_NIX_SANDBOX" || "$NIX_EVAL_AVAILABLE" != "true" ]]; then
   skip_test test_T78_hm_name_override_changes_home_file_key "requires nix eval --impure"
   skip_test test_T79_hm_default_name_path_when_name_omitted "requires nix eval --impure"
-  skip_test test_T80_hm_invalid_name_empty_fails "requires nix eval --impure"
-  skip_test test_T81_hm_invalid_name_dot_fails "requires nix eval --impure"
-  skip_test test_T82_hm_invalid_name_dotdot_fails "requires nix eval --impure"
-  skip_test test_T83_hm_invalid_name_slash_fails "requires nix eval --impure"
-  skip_test test_T84_hm_invalid_name_double_at_fails "requires nix eval --impure"
+  skip_test test_T80_hm_invalid_name_validation_matrix "requires nix eval --impure"
   skip_test test_T85_hm_per_skill_enable_false_omits_entry "requires nix eval --impure"
   skip_test test_T86_hm_enabled_destination_collision_fails "requires nix eval --impure"
   skip_test test_T93_hm_enabled_destination_collision_canonicalized_dirs_fails "requires nix eval --impure"
 else
   run_test test_T78_hm_name_override_changes_home_file_key
   run_test test_T79_hm_default_name_path_when_name_omitted
-  run_test test_T80_hm_invalid_name_empty_fails
-  run_test test_T81_hm_invalid_name_dot_fails
-  run_test test_T82_hm_invalid_name_dotdot_fails
-  run_test test_T83_hm_invalid_name_slash_fails
-  run_test test_T84_hm_invalid_name_double_at_fails
+  run_test test_T80_hm_invalid_name_validation_matrix
   run_test test_T85_hm_per_skill_enable_false_omits_entry
   run_test test_T86_hm_enabled_destination_collision_fails
   run_test test_T93_hm_enabled_destination_collision_canonicalized_dirs_fails
