@@ -7,7 +7,7 @@
 #
 # SkillSpec :: {
 #   source     : Path | Derivation    # Nix store path to the source repo/tree
-#   subdir     : String               # Subdirectory within source containing the skill
+#   subdir     : String               # Subdirectory within source containing the skill (default: ".")
 #   name       : String | null        # Per-skill deployed directory name; null -> use attr key
 #   enable     : Bool                 # Per-skill enable flag; omitted -> true
 #   mode       : "symlink" | "copy" | null  # Per-skill override; null -> use defaultMode
@@ -145,15 +145,17 @@
     requiredSource = assert lib.assertMsg (builtins.hasAttr "source" spec)
     "skills-deployer: skill '${skillAttrName}' is missing required field 'source'.";
       spec.source;
-    requiredSubdir = assert lib.assertMsg (builtins.hasAttr "subdir" spec)
-    "skills-deployer: skill '${skillAttrName}' is missing required field 'subdir'.";
-      spec.subdir;
+    defaultSubdir = ".";
     mode = assertMode skillAttrName (
       if (spec ? mode) && spec.mode != null
       then spec.mode
       else defaultMode
     );
-    subdir = assertSubdir skillAttrName requiredSubdir;
+    subdir = assertSubdir skillAttrName (
+      if spec ? subdir
+      then spec.subdir
+      else defaultSubdir
+    );
     resolvedSource = "${requiredSource}/${subdir}";
 
     hasTargetDirs = (spec ? targetDirs) && spec.targetDirs != null;

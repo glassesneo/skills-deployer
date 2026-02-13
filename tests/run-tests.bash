@@ -1794,9 +1794,9 @@ test_T48_hm_missing_source_fails() {
 }
 
 # ================================================================
-# T49: hm_missing_subdir_fails
+# T49: hm_missing_subdir_defaults_to_dot
 # ================================================================
-test_T49_hm_missing_subdir_fails() {
+test_T49_hm_missing_subdir_defaults_to_dot() {
   local output exit_code=0
   output=$(eval_hm_module "{
     enable = true;
@@ -1805,15 +1805,19 @@ test_T49_hm_missing_subdir_fails() {
         source = ${FIXTURES_DIR}/valid-skill;
       };
     };
-  }" 2>&1) || exit_code=$?
-  output=$(strip_nix_search_path_warnings "$output")
+  }") || exit_code=$?
 
-  if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: hm module eval should fail when subdir is missing\n" >&2
-    return 1
+  assert_eq "$exit_code" 0 "hm module eval should succeed with missing subdir"
+
+  local key_exists source_path ends_with_dot=false
+  key_exists=$(echo "$output" | jq 'has(".agents/skills/skill-a")')
+  assert_eq "$key_exists" "true" "home.file should contain default target key"
+
+  source_path=$(echo "$output" | jq -r '.[".agents/skills/skill-a"].source')
+  if [[ "$source_path" == */. ]]; then
+    ends_with_dot=true
   fi
-  assert_contains "$output" "subdir" "error should mention missing subdir"
-  assert_contains "$output" "no value defined" "error should indicate missing required option"
+  assert_eq "$ends_with_dot" "true" "source path should end with /. (default subdir)"
 }
 
 # ================================================================
@@ -2558,12 +2562,31 @@ test_T89_nix_disabled_skill_validation_matrix() {
       };
   ' "forbidden"
 
-  assert_mkdeployskills_fails "disabled skill still validates required fields" '
-      bad-disabled = {
-        source = ./.;
-        enable = false;
+  local output exit_code=0
+  output=$(nix eval --impure --json --expr '
+    let
+      pkgs = import <nixpkgs> {};
+      mkDeploySkills = import '"$REPO_ROOT"'/lib/mkDeploySkills.nix;
+      drv = mkDeploySkills {
+        inherit pkgs;
+        skills = {
+          enabled-default-subdir = {
+            source = '"$REPO_ROOT"'/tests/fixtures/valid-skill;
+          };
+          disabled-default-subdir = {
+            source = '"$REPO_ROOT"'/tests/fixtures/valid-skill;
+            enable = false;
+          };
+        };
       };
-  ' "missing required field 'subdir'"
+      manifest = builtins.fromJSON (builtins.unsafeDiscardStringContext (builtins.readFile drv.passthru.manifestPath));
+    in manifest
+  ') || exit_code=$?
+
+  assert_eq "$exit_code" 0 "nix eval should succeed with default subdir"
+  local subdir_value
+  subdir_value=$(echo "$output" | jq -r '.["enabled-default-subdir"].subdir')
+  assert_eq "$subdir_value" "." "subdir should default to '.'"
 }
 
 # ================================================================
@@ -2684,7 +2707,7 @@ else
   run_test test_T46_hm_custom_default_targetdir
   run_test test_T47_hm_per_skill_targetdir_override
   run_test test_T48_hm_missing_source_fails
-  run_test test_T49_hm_missing_subdir_fails
+  run_test test_T49_hm_missing_subdir_defaults_to_dot
   run_test test_T50_hm_source_wrong_type_fails
   run_test test_T51_hm_targetdirs_multi_target
   run_test test_T52_hm_targetdir_targetdirs_validation_matrix

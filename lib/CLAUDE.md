@@ -6,7 +6,7 @@ Core logic: `mkDeploySkills.nix` compiles runtime skill config into a `deploy-sk
 ## Contracts
 
 - `mkDeploySkills.nix` takes `{ pkgs, skills, defaultMode ? "symlink", defaultTargetDir ? ".agents/skills" }`.
-- Every SkillSpec requires `source` (Path) and `subdir` (String). Optional: `name`, `enable`, `mode`, `targetDir`, `targetDirs`.
+- Every SkillSpec requires `source` (Path). `subdir` (String) defaults to `"."`. Optional: `name`, `enable`, `mode`, `targetDir`, `targetDirs`.
 - Explicit `name` must be non-empty and cannot be `.`, `..`, contain `/`, or contain `@@`.
 - `enable = false` excludes a skill from the enabled manifest and includes it in the disabled cleanup payload.
 - `targetDirs` (list) and `targetDir` (string) are mutually exclusive. `targetDirs` expands to N manifest entries keyed `<name>@@<dir>`.

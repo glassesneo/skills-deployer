@@ -24,6 +24,7 @@
       };
       subdir = lib.mkOption {
         type = lib.types.str;
+        default = ".";
         description = "Relative subdirectory within source";
       };
       targetDir = lib.mkOption {
