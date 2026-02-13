@@ -278,7 +278,7 @@ EOF
 # ================================================================
 # T01: create_copy_single
 # ================================================================
-test_T01_create_copy_single() {
+test_runtime_create_copy_single() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -303,7 +303,7 @@ test_T01_create_copy_single() {
 # ================================================================
 # T02: create_symlink_single
 # ================================================================
-test_T02_create_symlink_single() {
+test_runtime_create_symlink_single() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -327,7 +327,7 @@ test_T02_create_symlink_single() {
 # ================================================================
 # T03: create_multiple
 # ================================================================
-test_T03_create_multiple() {
+test_runtime_create_multiple() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -378,7 +378,7 @@ EOF
 # ================================================================
 # T04: idempotent_rerun
 # ================================================================
-test_T04_idempotent_rerun() {
+test_runtime_idempotent_rerun() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -404,7 +404,7 @@ test_T04_idempotent_rerun() {
 # ================================================================
 # T05: mode_change_copy_to_symlink
 # ================================================================
-test_T05_mode_change_copy_to_symlink() {
+test_runtime_mode_change_copy_to_symlink() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -437,7 +437,7 @@ test_T05_mode_change_copy_to_symlink() {
 # ================================================================
 # T06: mode_change_symlink_to_copy
 # ================================================================
-test_T06_mode_change_symlink_to_copy() {
+test_runtime_mode_change_symlink_to_copy() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -469,7 +469,7 @@ test_T06_mode_change_symlink_to_copy() {
 # ================================================================
 # T07: source_update
 # ================================================================
-test_T07_source_update() {
+test_runtime_source_update() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -501,7 +501,7 @@ test_T07_source_update() {
 # ================================================================
 # T08: dry_run_no_changes
 # ================================================================
-test_T08_dry_run_no_changes() {
+test_runtime_dry_run_no_changes() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -526,7 +526,7 @@ test_T08_dry_run_no_changes() {
 # ================================================================
 # T09: dry_run_with_changes
 # ================================================================
-test_T09_dry_run_with_changes() {
+test_runtime_dry_run_with_changes() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -550,7 +550,7 @@ test_T09_dry_run_with_changes() {
 # ================================================================
 # T10: validation_missing_skillmd
 # ================================================================
-test_T10_validation_missing_skillmd() {
+test_runtime_validation_missing_skillmd() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -574,7 +574,7 @@ test_T10_validation_missing_skillmd() {
 # Skipped in runtime tests -- this is a Nix eval assertion.
 # We test it by invoking nix eval directly.
 # ================================================================
-test_T11_validation_subdir_traversal() {
+test_runtime_validation_subdir_traversal() {
   local exit_code=0
   local output
   output=$(nix eval --impure --raw --expr '
@@ -604,7 +604,7 @@ test_T11_validation_subdir_traversal() {
 # ================================================================
 # T12: validation_absolute_subdir (Nix eval-time)
 # ================================================================
-test_T12_validation_absolute_subdir() {
+test_runtime_validation_absolute_subdir() {
   local exit_code=0
   local output
   output=$(nix eval --impure --raw --expr '
@@ -633,7 +633,7 @@ test_T12_validation_absolute_subdir() {
 # ================================================================
 # T13: conflict_unmanaged
 # ================================================================
-test_T13_conflict_unmanaged() {
+test_runtime_conflict_unmanaged() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -659,7 +659,7 @@ test_T13_conflict_unmanaged() {
 # ================================================================
 # T14: not_project_root
 # ================================================================
-test_T14_not_project_root() {
+test_runtime_not_project_root() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -680,7 +680,7 @@ test_T14_not_project_root() {
 # ================================================================
 # T15: custom_target_dir
 # ================================================================
-test_T15_custom_target_dir() {
+test_runtime_custom_target_dir() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -702,7 +702,7 @@ test_T15_custom_target_dir() {
 # ================================================================
 # T16: per_skill_target_override
 # ================================================================
-test_T16_per_skill_target_override() {
+test_runtime_per_skill_target_override() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -741,7 +741,7 @@ EOF
 # ================================================================
 # T17: unknown_arg
 # ================================================================
-test_T17_unknown_arg() {
+test_runtime_unknown_arg() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -762,7 +762,7 @@ test_T17_unknown_arg() {
 # ================================================================
 # T18: help_flag
 # ================================================================
-test_T18_help_flag() {
+test_runtime_help_flag() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -784,7 +784,7 @@ test_T18_help_flag() {
 # ================================================================
 # T19: marker_content
 # ================================================================
-test_T19_marker_content() {
+test_runtime_marker_content() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -821,7 +821,7 @@ test_T19_marker_content() {
 # ================================================================
 # T20: no_skills_configured
 # ================================================================
-test_T20_no_skills_configured() {
+test_runtime_no_skills_configured() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -839,7 +839,7 @@ test_T20_no_skills_configured() {
 # ================================================================
 # T21: symlink_hidden_files
 # ================================================================
-test_T21_symlink_hidden_files() {
+test_runtime_symlink_hidden_files() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -865,7 +865,7 @@ test_T21_symlink_hidden_files() {
 # ================================================================
 # T22: atomic_replace_no_partial
 # ================================================================
-test_T22_atomic_replace_no_partial() {
+test_runtime_atomic_replace_no_partial() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -900,7 +900,7 @@ test_T22_atomic_replace_no_partial() {
 # ================================================================
 # T23: symlink_no_dotfiles (regression: no bogus .* symlink)
 # ================================================================
-test_T23_symlink_no_dotfiles() {
+test_runtime_symlink_no_dotfiles() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -929,7 +929,7 @@ test_T23_symlink_no_dotfiles() {
 # ================================================================
 # T24: default_mode_implicit_symlink (mkDeploySkills default)
 # ================================================================
-test_T24_default_mode_implicit_symlink() {
+test_runtime_default_mode_implicit_symlink() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -975,7 +975,7 @@ EOF
 # ================================================================
 # T25: multi_target_basic
 # ================================================================
-test_T25_multi_target_basic() {
+test_runtime_multi_basic() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -1015,7 +1015,7 @@ EOF
 # ================================================================
 # T26: multi_target_idempotent
 # ================================================================
-test_T26_multi_target_idempotent() {
+test_runtime_multi_idempotent() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -1053,7 +1053,7 @@ EOF
 # ================================================================
 # T27: multi_target_incremental_add
 # ================================================================
-test_T27_multi_target_incremental_add() {
+test_runtime_multi_incremental_add() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -1120,7 +1120,7 @@ EOF
 # ================================================================
 # T28: multi_target_dry_run
 # ================================================================
-test_T28_multi_target_dry_run() {
+test_runtime_multi_dry_run() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -1160,7 +1160,7 @@ EOF
 # ================================================================
 # T29: multi_target_mixed_with_single
 # ================================================================
-test_T29_multi_target_mixed_with_single() {
+test_runtime_multi_mixed_with_single() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -1209,7 +1209,7 @@ EOF
 # ================================================================
 # T30: multi_target_marker_name
 # ================================================================
-test_T30_multi_target_marker_name() {
+test_runtime_multi_marker_name() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -1249,7 +1249,7 @@ EOF
 # ================================================================
 # T31: nix_targetdirs_validation_matrix
 # ================================================================
-test_T31_nix_targetdirs_validation_matrix() {
+test_nix_targetdirs_validation_matrix() {
   assert_mkdeployskills_fails "targetDir + targetDirs are mutually exclusive" '
       bad-skill = {
         source = ./.;
@@ -1319,7 +1319,7 @@ test_T31_nix_targetdirs_validation_matrix() {
 # ================================================================
 # T32: nix_targetdirs_expansion
 # ================================================================
-test_T32_nix_targetdirs_expansion() {
+test_nix_targetdirs_expansion() {
   local output exit_code=0
   output=$(nix eval --impure --json --expr '
     let
@@ -1379,7 +1379,7 @@ test_T32_nix_targetdirs_expansion() {
 # ================================================================
 # T33: multi_target_single_entry
 # ================================================================
-test_T33_multi_target_single_entry() {
+test_runtime_multi_single_entry() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -1417,7 +1417,7 @@ EOF
 # ================================================================
 # T34: multi_target_mode_drift
 # ================================================================
-test_T34_multi_target_mode_drift() {
+test_runtime_multi_mode_drift() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -1496,7 +1496,7 @@ EOF
 # ================================================================
 # T35: multi_target_source_drift
 # ================================================================
-test_T35_multi_target_source_drift() {
+test_runtime_multi_source_drift() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -1566,7 +1566,7 @@ EOF
 # ================================================================
 # T36: nix_skill_name_with_at_signs
 # ================================================================
-test_T36_nix_skill_name_with_at_signs() {
+test_nix_skill_name_with_at_signs() {
   local exit_code=0
   local output
   output=$(nix eval --impure --raw --expr '
@@ -1595,7 +1595,7 @@ test_T36_nix_skill_name_with_at_signs() {
 # ================================================================
 # T37: nix_manifest_key_collision
 # ================================================================
-test_T37_nix_manifest_key_collision() {
+test_nix_manifest_key_collision() {
   local exit_code=0
   local output
   output=$(nix eval --impure --raw --expr '
@@ -1625,7 +1625,7 @@ test_T37_nix_manifest_key_collision() {
 # ================================================================
 # T42: hm_disabled_empty
 # ================================================================
-test_T42_hm_disabled_empty() {
+test_hm_disabled_empty() {
   local output exit_code=0
   output=$(eval_hm_module '{
     enable = false;
@@ -1641,7 +1641,7 @@ test_T42_hm_disabled_empty() {
 # ================================================================
 # T43: hm_enabled_empty_skills
 # ================================================================
-test_T43_hm_enabled_empty_skills() {
+test_hm_enabled_empty_skills() {
   local output exit_code=0
   output=$(eval_hm_module '{
     enable = true;
@@ -1658,7 +1658,7 @@ test_T43_hm_enabled_empty_skills() {
 # ================================================================
 # T44: hm_single_skill_default_target
 # ================================================================
-test_T44_hm_single_skill_default_target() {
+test_hm_single_skill_default_target() {
   local output exit_code=0
   output=$(eval_hm_module "{
     enable = true;
@@ -1686,7 +1686,7 @@ test_T44_hm_single_skill_default_target() {
 # ================================================================
 # T45: hm_multiple_skills_merge
 # ================================================================
-test_T45_hm_multiple_skills_merge() {
+test_hm_multiple_skills_merge() {
   local output exit_code=0
   output=$(eval_hm_module "{
     enable = true;
@@ -1717,7 +1717,7 @@ test_T45_hm_multiple_skills_merge() {
 # ================================================================
 # T46: hm_custom_default_targetdir
 # ================================================================
-test_T46_hm_custom_default_targetdir() {
+test_hm_custom_default_targetdir() {
   local output exit_code=0
   output=$(eval_hm_module "{
     enable = true;
@@ -1740,7 +1740,7 @@ test_T46_hm_custom_default_targetdir() {
 # ================================================================
 # T47: hm_per_skill_targetdir_override
 # ================================================================
-test_T47_hm_per_skill_targetdir_override() {
+test_hm_per_skill_targetdir_override() {
   local output exit_code=0
   output=$(eval_hm_module "{
     enable = true;
@@ -1773,7 +1773,7 @@ test_T47_hm_per_skill_targetdir_override() {
 # ================================================================
 # T48: hm_missing_source_fails
 # ================================================================
-test_T48_hm_missing_source_fails() {
+test_hm_missing_source_fails() {
   local output exit_code=0
   output=$(eval_hm_module '{
     enable = true;
@@ -1796,7 +1796,7 @@ test_T48_hm_missing_source_fails() {
 # ================================================================
 # T49: hm_missing_subdir_defaults_to_dot
 # ================================================================
-test_T49_hm_missing_subdir_defaults_to_dot() {
+test_hm_missing_subdir_defaults_to_dot() {
   local output exit_code=0
   output=$(eval_hm_module "{
     enable = true;
@@ -1823,7 +1823,7 @@ test_T49_hm_missing_subdir_defaults_to_dot() {
 # ================================================================
 # T50: hm_source_wrong_type_fails
 # ================================================================
-test_T50_hm_source_wrong_type_fails() {
+test_hm_source_wrong_type_fails() {
   local output exit_code=0
   output=$(eval_hm_module '{
     enable = true;
@@ -1847,7 +1847,7 @@ test_T50_hm_source_wrong_type_fails() {
 # ================================================================
 # T51: hm_targetdirs_multi_target
 # ================================================================
-test_T51_hm_targetdirs_multi_target() {
+test_hm_targetdirs_multi_target() {
   local output exit_code=0
   output=$(eval_hm_module "{
     enable = true;
@@ -1875,7 +1875,7 @@ test_T51_hm_targetdirs_multi_target() {
 # ================================================================
 # T52: hm_targetdir_targetdirs_validation_matrix
 # ================================================================
-test_T52_hm_targetdir_targetdirs_validation_matrix() {
+test_hm_targetdir_targetdirs_validation_matrix() {
   assert_hm_single_skill_fails "targetDir rejects list values" '      targetDir = ["list"];' "targetDir" "type"
   assert_hm_single_skill_fails "targetDirs rejects string values" '      targetDirs = ".agents/skills";' "targetDirs" "list"
   assert_hm_single_skill_fails "targetDir + targetDirs are mutually exclusive" '
@@ -1892,7 +1892,7 @@ test_T52_hm_targetdir_targetdirs_validation_matrix() {
 # ================================================================
 # T60: nix_name_override_reflected_in_manifest
 # ================================================================
-test_T60_nix_name_override_reflected_in_manifest() {
+test_nix_name_override_reflected_in_manifest() {
   local output exit_code=0
   output=$(nix eval --impure --json --expr '
     let
@@ -1922,7 +1922,7 @@ test_T60_nix_name_override_reflected_in_manifest() {
 # ================================================================
 # T61: nix_enable_false_reflected_in_disabled_payload
 # ================================================================
-test_T61_nix_enable_false_reflected_in_disabled_payload() {
+test_nix_enable_false_reflected_in_disabled_payload() {
   local output exit_code=0
   output=$(nix eval --impure --json --expr '
     let
@@ -1969,7 +1969,7 @@ test_T61_nix_enable_false_reflected_in_disabled_payload() {
 # ================================================================
 # T62: nix_enabled_destination_collision_fails
 # ================================================================
-test_T62_nix_enabled_destination_collision_fails() {
+test_nix_enabled_destination_collision_fails() {
   local output exit_code=0
   output=$(nix eval --impure --raw --expr '
     let
@@ -2004,7 +2004,7 @@ test_T62_nix_enabled_destination_collision_fails() {
 # ================================================================
 # T63: nix_enabled_disabled_destination_overlap_fails
 # ================================================================
-test_T63_nix_enabled_disabled_destination_overlap_fails() {
+test_nix_enabled_disabled_destination_overlap_fails() {
   local output exit_code=0
   output=$(nix eval --impure --raw --expr '
     let
@@ -2040,7 +2040,7 @@ test_T63_nix_enabled_disabled_destination_overlap_fails() {
 # ================================================================
 # T64: nix_explicit_name_validation_matrix
 # ================================================================
-test_T64_nix_explicit_name_validation_matrix() {
+test_nix_explicit_name_validation_matrix() {
   assert_mkdeployskills_fails "explicit name cannot be empty" '
       bad = {
         source = ./.;
@@ -2085,7 +2085,7 @@ test_T64_nix_explicit_name_validation_matrix() {
 # ================================================================
 # T69: runtime_name_override_paths_and_markers
 # ================================================================
-test_T69_runtime_name_override_paths_and_markers() {
+test_runtime_name_override_paths_and_markers() {
   run_single_target_case() {
     local workdir
     workdir=$(mktemp -d)
@@ -2161,7 +2161,7 @@ EOF
 # ================================================================
 # T72: runtime_cleanup_remove_dryrun_and_noop_contracts
 # ================================================================
-test_T72_runtime_cleanup_remove_dryrun_and_noop_contracts() {
+test_runtime_cleanup_remove_dryrun_and_noop_contracts() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -2216,7 +2216,7 @@ EOF
 # ================================================================
 # T73: runtime_cleanup_skip_safety_contracts
 # ================================================================
-test_T73_runtime_cleanup_skip_safety_contracts() {
+test_runtime_cleanup_skip_safety_contracts() {
   run_unmanaged_and_marker_mismatch_case() {
     local workdir
     workdir=$(mktemp -d)
@@ -2325,7 +2325,7 @@ EOF
 # ================================================================
 # T77: runtime_lifecycle_enable_disable_reenable
 # ================================================================
-test_T77_runtime_lifecycle_enable_disable_reenable() {
+test_runtime_lifecycle_enable_disable_reenable() {
   local workdir
   workdir=$(mktemp -d)
   trap 'rm -rf "$workdir"' RETURN
@@ -2377,7 +2377,7 @@ EOF
 # ================================================================
 # T78: hm_name_override_changes_home_file_key
 # ================================================================
-test_T78_hm_name_override_changes_home_file_key() {
+test_hm_name_override_changes_home_file_key() {
   local output exit_code=0
   output=$(eval_hm_module "{
     enable = true;
@@ -2403,7 +2403,7 @@ test_T78_hm_name_override_changes_home_file_key() {
 # ================================================================
 # T79: hm_default_name_path_when_name_omitted
 # ================================================================
-test_T79_hm_default_name_path_when_name_omitted() {
+test_hm_default_name_path_when_name_omitted() {
   local output exit_code=0
   output=$(eval_hm_module "{
     enable = true;
@@ -2435,7 +2435,7 @@ test_T79_hm_default_name_path_when_name_omitted() {
 # ================================================================
 # T80: hm_invalid_name_validation_matrix
 # ================================================================
-test_T80_hm_invalid_name_validation_matrix() {
+test_hm_invalid_name_validation_matrix() {
   assert_hm_single_skill_fails "explicit HM name cannot be empty" '      name = "";' "invalid 'name'" "cannot be empty"
   assert_hm_single_skill_fails "explicit HM name cannot be '.'" '      name = ".";' "invalid 'name'" "forbidden"
   assert_hm_single_skill_fails "explicit HM name cannot be '..'" '      name = "..";' "invalid 'name'" "forbidden"
@@ -2446,7 +2446,7 @@ test_T80_hm_invalid_name_validation_matrix() {
 # ================================================================
 # T85: hm_per_skill_enable_false_omits_entry
 # ================================================================
-test_T85_hm_per_skill_enable_false_omits_entry() {
+test_hm_per_skill_enable_false_omits_entry() {
   local output exit_code=0
   output=$(eval_hm_module "{
     enable = true;
@@ -2478,7 +2478,7 @@ test_T85_hm_per_skill_enable_false_omits_entry() {
 # ================================================================
 # T86: hm_enabled_destination_collision_fails
 # ================================================================
-test_T86_hm_enabled_destination_collision_fails() {
+test_hm_enabled_destination_collision_fails() {
   local output exit_code=0
   output=$(eval_hm_module "{
     enable = true;
@@ -2508,7 +2508,7 @@ test_T86_hm_enabled_destination_collision_fails() {
 # ================================================================
 # T87: nix_canonicalized_destination_conflict_matrix
 # ================================================================
-test_T87_nix_canonicalized_destination_conflict_matrix() {
+test_nix_canonicalized_destination_conflict_matrix() {
   assert_mkdeployskills_fails "enabled destination collision after canonicalization" '
       first = {
         source = ./.;
@@ -2544,7 +2544,7 @@ test_T87_nix_canonicalized_destination_conflict_matrix() {
 # ================================================================
 # T89: nix_disabled_skill_validation_matrix
 # ================================================================
-test_T89_nix_disabled_skill_validation_matrix() {
+test_nix_disabled_skill_validation_matrix() {
   assert_mkdeployskills_fails "disabled skill still validates mode" '
       bad-disabled = {
         source = ./.;
@@ -2592,7 +2592,7 @@ test_T89_nix_disabled_skill_validation_matrix() {
 # ================================================================
 # T93: hm_enabled_destination_collision_canonicalized_dirs_fails
 # ================================================================
-test_T93_hm_enabled_destination_collision_canonicalized_dirs_fails() {
+test_hm_enabled_destination_collision_canonicalized_dirs_fails() {
   local output exit_code=0
   output=$(eval_hm_module "{
     enable = true;
@@ -2627,118 +2627,117 @@ MARKER_FILENAME=".skills-deployer-managed"
 
 echo "TAP version 13"
 
-run_test test_T01_create_copy_single
-run_test test_T02_create_symlink_single
-run_test test_T03_create_multiple
-run_test test_T04_idempotent_rerun
-run_test test_T05_mode_change_copy_to_symlink
-run_test test_T06_mode_change_symlink_to_copy
-run_test test_T07_source_update
-run_test test_T08_dry_run_no_changes
-run_test test_T09_dry_run_with_changes
-run_test test_T10_validation_missing_skillmd
+# Runtime deployment (single-target)
+run_test test_runtime_create_copy_single
+run_test test_runtime_create_symlink_single
+run_test test_runtime_create_multiple
+run_test test_runtime_idempotent_rerun
+run_test test_runtime_mode_change_copy_to_symlink
+run_test test_runtime_mode_change_symlink_to_copy
+run_test test_runtime_source_update
+run_test test_runtime_dry_run_no_changes
+run_test test_runtime_dry_run_with_changes
+run_test test_runtime_validation_missing_skillmd
 if [[ -n "$IN_NIX_SANDBOX" || "$NIX_EVAL_AVAILABLE" != "true" ]]; then
-  skip_test test_T11_validation_subdir_traversal "requires nix eval --impure (unavailable in this environment)"
-  skip_test test_T12_validation_absolute_subdir "requires nix eval --impure (unavailable in this environment)"
-  skip_test test_T24_default_mode_implicit_symlink "requires nix eval --impure (unavailable in this environment)"
+  skip_test test_runtime_validation_subdir_traversal "requires nix eval --impure"
+  skip_test test_runtime_validation_absolute_subdir "requires nix eval --impure"
+  skip_test test_runtime_default_mode_implicit_symlink "requires nix eval --impure"
 else
-  run_test test_T11_validation_subdir_traversal
-  run_test test_T12_validation_absolute_subdir
-  run_test test_T24_default_mode_implicit_symlink
+  run_test test_runtime_validation_subdir_traversal
+  run_test test_runtime_validation_absolute_subdir
+  run_test test_runtime_default_mode_implicit_symlink
 fi
-run_test test_T13_conflict_unmanaged
-run_test test_T14_not_project_root
-run_test test_T15_custom_target_dir
-run_test test_T16_per_skill_target_override
-run_test test_T17_unknown_arg
-run_test test_T18_help_flag
-run_test test_T19_marker_content
-run_test test_T20_no_skills_configured
-run_test test_T21_symlink_hidden_files
-run_test test_T22_atomic_replace_no_partial
-run_test test_T23_symlink_no_dotfiles
-run_test test_T25_multi_target_basic
-run_test test_T26_multi_target_idempotent
-run_test test_T27_multi_target_incremental_add
-run_test test_T28_multi_target_dry_run
-run_test test_T29_multi_target_mixed_with_single
-run_test test_T30_multi_target_marker_name
+run_test test_runtime_conflict_unmanaged
+run_test test_runtime_not_project_root
+run_test test_runtime_custom_target_dir
+run_test test_runtime_per_skill_target_override
+run_test test_runtime_unknown_arg
+run_test test_runtime_help_flag
+run_test test_runtime_marker_content
+run_test test_runtime_no_skills_configured
+run_test test_runtime_symlink_hidden_files
+run_test test_runtime_atomic_replace_no_partial
+run_test test_runtime_symlink_no_dotfiles
+run_test test_runtime_name_override_paths_and_markers
+run_test test_runtime_cleanup_remove_dryrun_and_noop_contracts
+run_test test_runtime_cleanup_skip_safety_contracts
+run_test test_runtime_lifecycle_enable_disable_reenable
+
+# Runtime deployment (multi-target)
+run_test test_runtime_multi_basic
+run_test test_runtime_multi_idempotent
+run_test test_runtime_multi_incremental_add
+run_test test_runtime_multi_dry_run
+run_test test_runtime_multi_mixed_with_single
+run_test test_runtime_multi_marker_name
+run_test test_runtime_multi_single_entry
+run_test test_runtime_multi_mode_drift
+run_test test_runtime_multi_source_drift
+
+# Nix eval-time validation
 if [[ -n "$IN_NIX_SANDBOX" || "$NIX_EVAL_AVAILABLE" != "true" ]]; then
-  skip_test test_T31_nix_targetdirs_validation_matrix "requires nix eval --impure"
-  skip_test test_T32_nix_targetdirs_expansion "requires nix eval --impure"
+  skip_test test_nix_targetdirs_validation_matrix "requires nix eval --impure"
+  skip_test test_nix_targetdirs_expansion "requires nix eval --impure"
+  skip_test test_nix_skill_name_with_at_signs "requires nix eval --impure"
+  skip_test test_nix_manifest_key_collision "requires nix eval --impure"
+  skip_test test_nix_name_override_reflected_in_manifest "requires nix eval --impure"
+  skip_test test_nix_enable_false_reflected_in_disabled_payload "requires nix eval --impure"
+  skip_test test_nix_enabled_destination_collision_fails "requires nix eval --impure"
+  skip_test test_nix_enabled_disabled_destination_overlap_fails "requires nix eval --impure"
+  skip_test test_nix_explicit_name_validation_matrix "requires nix eval --impure"
+  skip_test test_nix_canonicalized_destination_conflict_matrix "requires nix eval --impure"
+  skip_test test_nix_disabled_skill_validation_matrix "requires nix eval --impure"
 else
-  run_test test_T31_nix_targetdirs_validation_matrix
-  run_test test_T32_nix_targetdirs_expansion
-fi
-run_test test_T33_multi_target_single_entry
-run_test test_T34_multi_target_mode_drift
-run_test test_T35_multi_target_source_drift
-if [[ -n "$IN_NIX_SANDBOX" || "$NIX_EVAL_AVAILABLE" != "true" ]]; then
-  skip_test test_T36_nix_skill_name_with_at_signs "requires nix eval --impure"
-  skip_test test_T37_nix_manifest_key_collision "requires nix eval --impure"
-else
-  run_test test_T36_nix_skill_name_with_at_signs
-  run_test test_T37_nix_manifest_key_collision
-fi
-if [[ -n "$IN_NIX_SANDBOX" || "$NIX_EVAL_AVAILABLE" != "true" ]]; then
-  skip_test test_T42_hm_disabled_empty "requires nix eval --impure"
-  skip_test test_T43_hm_enabled_empty_skills "requires nix eval --impure"
-  skip_test test_T44_hm_single_skill_default_target "requires nix eval --impure"
-  skip_test test_T45_hm_multiple_skills_merge "requires nix eval --impure"
-  skip_test test_T46_hm_custom_default_targetdir "requires nix eval --impure"
-  skip_test test_T47_hm_per_skill_targetdir_override "requires nix eval --impure"
-  skip_test test_T48_hm_missing_source_fails "requires nix eval --impure"
-  skip_test test_T49_hm_missing_subdir_fails "requires nix eval --impure"
-  skip_test test_T50_hm_source_wrong_type_fails "requires nix eval --impure"
-  skip_test test_T51_hm_targetdirs_multi_target "requires nix eval --impure"
-  skip_test test_T52_hm_targetdir_targetdirs_validation_matrix "requires nix eval --impure"
-  skip_test test_T60_nix_name_override_reflected_in_manifest "requires nix eval --impure"
-  skip_test test_T61_nix_enable_false_reflected_in_disabled_payload "requires nix eval --impure"
-  skip_test test_T62_nix_enabled_destination_collision_fails "requires nix eval --impure"
-  skip_test test_T63_nix_enabled_disabled_destination_overlap_fails "requires nix eval --impure"
-  skip_test test_T64_nix_explicit_name_validation_matrix "requires nix eval --impure"
-  skip_test test_T87_nix_canonicalized_destination_conflict_matrix "requires nix eval --impure"
-  skip_test test_T89_nix_disabled_skill_validation_matrix "requires nix eval --impure"
-else
-  run_test test_T42_hm_disabled_empty
-  run_test test_T43_hm_enabled_empty_skills
-  run_test test_T44_hm_single_skill_default_target
-  run_test test_T45_hm_multiple_skills_merge
-  run_test test_T46_hm_custom_default_targetdir
-  run_test test_T47_hm_per_skill_targetdir_override
-  run_test test_T48_hm_missing_source_fails
-  run_test test_T49_hm_missing_subdir_defaults_to_dot
-  run_test test_T50_hm_source_wrong_type_fails
-  run_test test_T51_hm_targetdirs_multi_target
-  run_test test_T52_hm_targetdir_targetdirs_validation_matrix
-  run_test test_T60_nix_name_override_reflected_in_manifest
-  run_test test_T61_nix_enable_false_reflected_in_disabled_payload
-  run_test test_T62_nix_enabled_destination_collision_fails
-  run_test test_T63_nix_enabled_disabled_destination_overlap_fails
-  run_test test_T64_nix_explicit_name_validation_matrix
-  run_test test_T87_nix_canonicalized_destination_conflict_matrix
-  run_test test_T89_nix_disabled_skill_validation_matrix
+  run_test test_nix_targetdirs_validation_matrix
+  run_test test_nix_targetdirs_expansion
+  run_test test_nix_skill_name_with_at_signs
+  run_test test_nix_manifest_key_collision
+  run_test test_nix_name_override_reflected_in_manifest
+  run_test test_nix_enable_false_reflected_in_disabled_payload
+  run_test test_nix_enabled_destination_collision_fails
+  run_test test_nix_enabled_disabled_destination_overlap_fails
+  run_test test_nix_explicit_name_validation_matrix
+  run_test test_nix_canonicalized_destination_conflict_matrix
+  run_test test_nix_disabled_skill_validation_matrix
 fi
 
-run_test test_T69_runtime_name_override_paths_and_markers
-run_test test_T72_runtime_cleanup_remove_dryrun_and_noop_contracts
-run_test test_T73_runtime_cleanup_skip_safety_contracts
-run_test test_T77_runtime_lifecycle_enable_disable_reenable
-
+# Home Manager module
 if [[ -n "$IN_NIX_SANDBOX" || "$NIX_EVAL_AVAILABLE" != "true" ]]; then
-  skip_test test_T78_hm_name_override_changes_home_file_key "requires nix eval --impure"
-  skip_test test_T79_hm_default_name_path_when_name_omitted "requires nix eval --impure"
-  skip_test test_T80_hm_invalid_name_validation_matrix "requires nix eval --impure"
-  skip_test test_T85_hm_per_skill_enable_false_omits_entry "requires nix eval --impure"
-  skip_test test_T86_hm_enabled_destination_collision_fails "requires nix eval --impure"
-  skip_test test_T93_hm_enabled_destination_collision_canonicalized_dirs_fails "requires nix eval --impure"
+  skip_test test_hm_disabled_empty "requires nix eval --impure"
+  skip_test test_hm_enabled_empty_skills "requires nix eval --impure"
+  skip_test test_hm_single_skill_default_target "requires nix eval --impure"
+  skip_test test_hm_multiple_skills_merge "requires nix eval --impure"
+  skip_test test_hm_custom_default_targetdir "requires nix eval --impure"
+  skip_test test_hm_per_skill_targetdir_override "requires nix eval --impure"
+  skip_test test_hm_missing_source_fails "requires nix eval --impure"
+  skip_test test_hm_missing_subdir_defaults_to_dot "requires nix eval --impure"
+  skip_test test_hm_source_wrong_type_fails "requires nix eval --impure"
+  skip_test test_hm_targetdirs_multi_target "requires nix eval --impure"
+  skip_test test_hm_targetdir_targetdirs_validation_matrix "requires nix eval --impure"
+  skip_test test_hm_name_override_changes_home_file_key "requires nix eval --impure"
+  skip_test test_hm_default_name_path_when_name_omitted "requires nix eval --impure"
+  skip_test test_hm_invalid_name_validation_matrix "requires nix eval --impure"
+  skip_test test_hm_per_skill_enable_false_omits_entry "requires nix eval --impure"
+  skip_test test_hm_enabled_destination_collision_fails "requires nix eval --impure"
+  skip_test test_hm_enabled_destination_collision_canonicalized_dirs_fails "requires nix eval --impure"
 else
-  run_test test_T78_hm_name_override_changes_home_file_key
-  run_test test_T79_hm_default_name_path_when_name_omitted
-  run_test test_T80_hm_invalid_name_validation_matrix
-  run_test test_T85_hm_per_skill_enable_false_omits_entry
-  run_test test_T86_hm_enabled_destination_collision_fails
-  run_test test_T93_hm_enabled_destination_collision_canonicalized_dirs_fails
+  run_test test_hm_disabled_empty
+  run_test test_hm_enabled_empty_skills
+  run_test test_hm_single_skill_default_target
+  run_test test_hm_multiple_skills_merge
+  run_test test_hm_custom_default_targetdir
+  run_test test_hm_per_skill_targetdir_override
+  run_test test_hm_missing_source_fails
+  run_test test_hm_missing_subdir_defaults_to_dot
+  run_test test_hm_source_wrong_type_fails
+  run_test test_hm_targetdirs_multi_target
+  run_test test_hm_targetdir_targetdirs_validation_matrix
+  run_test test_hm_name_override_changes_home_file_key
+  run_test test_hm_default_name_path_when_name_omitted
+  run_test test_hm_invalid_name_validation_matrix
+  run_test test_hm_per_skill_enable_false_omits_entry
+  run_test test_hm_enabled_destination_collision_fails
+  run_test test_hm_enabled_destination_collision_canonicalized_dirs_fails
 fi
 
 echo ""
