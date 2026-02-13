@@ -26,3 +26,11 @@ or directly: `bash tests/run-tests.bash` (requires `jq` on PATH).
 - **IMPORTANT**: Register every new test with `run_test test_TNN_...` at the bottom of the file.
 - Use harness assertions (`assert_eq`, `assert_file_exists`, etc.) — not raw `test` or `[`.
 - Every new feature or bug fix in `scripts/` or `lib/` must have a corresponding test here.
+
+## Home Manager Module Tests
+
+- Home Manager module tests use IDs `T42`–`T59`.
+- Use `eval_hm_module` for these tests; it stubs both `options.home.file` and `options.assertions`, then fails eval when any assertion is false before returning `home.file` JSON.
+- These tests are eval-only; do not use `home-manager switch` in test coverage.
+- `nix eval --impure` is required for `eval_hm_module`; skipping in sandboxed/non-impure environments is expected.
+- Methodology: evaluate `modules/home-manager.nix` with `lib.evalModules` plus an inline stub to validate option behavior and `home.file` mapping output without Home Manager activation.

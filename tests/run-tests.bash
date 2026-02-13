@@ -84,7 +84,7 @@ skip_test() {
 # Detect Nix build sandbox: NIX_BUILD_TOP is set inside nix-build/nix flake check
 IN_NIX_SANDBOX="${NIX_BUILD_TOP:-}"
 NIX_EVAL_AVAILABLE=true
-if ! nix eval --impure --raw --expr '1' >/dev/null 2>&1; then
+if ! nix eval --impure --raw --expr '"1"' >/dev/null 2>&1; then
   NIX_EVAL_AVAILABLE=false
 fi
 
@@ -120,6 +120,66 @@ run_deploy_capture() {
   local exit_code=0
   (cd "$workdir" && MANIFEST_PATH="$manifest" bash "$DEPLOY_SCRIPT" "$@" 2>&1) || exit_code=$?
   return "$exit_code"
+}
+
+eval_hm_module() {
+  local programs_config="$1"
+  local nix_expr
+
+  # Safe eval-only approximation: this stub matches the option shape needed by
+  # the module without depending on full Home Manager runtime integration.
+  nix_expr=$(cat <<EOF
+let
+  pkgs = import <nixpkgs> {};
+  lib = pkgs.lib;
+  evaled =
+    (lib.evalModules {
+      modules = [
+        ${REPO_ROOT}/modules/home-manager.nix
+        ({ lib, ... }: {
+          options.assertions = lib.mkOption {
+            type = lib.types.listOf (lib.types.submodule {
+              options.assertion = lib.mkOption {
+                type = lib.types.bool;
+                description = "Whether this assertion passed";
+              };
+              options.message = lib.mkOption {
+                type = lib.types.str;
+                description = "Assertion failure message";
+              };
+            });
+            default = [];
+          };
+          options.home.file = lib.mkOption {
+            type = lib.types.attrsOf (lib.types.submodule {
+              options.source = lib.mkOption {
+                type = lib.types.path;
+                description = "Path to source file or directory";
+              };
+              options.text = lib.mkOption {
+                type = lib.types.str;
+                description = "Inline content as string";
+                default = "";
+              };
+            });
+            default = {};
+          };
+          config.home.file = {};
+        })
+        ({ ... }: {
+          programs.skills-deployer = ${programs_config};
+        })
+      ];
+    }).config;
+  failedAssertions = builtins.filter (a: !a.assertion) evaled.assertions;
+in
+if failedAssertions != []
+then builtins.throw (builtins.concatStringsSep "\n" (map (a: a.message) failedAssertions))
+else evaled.home.file
+EOF
+  )
+
+  nix eval --impure --json --expr "$nix_expr"
 }
 
 # ================================================================
@@ -432,7 +492,7 @@ test_T11_validation_subdir_traversal() {
         inherit pkgs;
         skills = {
           bad-skill = {
-            source = ./. ;
+            source = '"$REPO_ROOT"'/tests/fixtures/valid-skill;
             subdir = "../etc";
           };
         };
@@ -462,7 +522,7 @@ test_T12_validation_absolute_subdir() {
         inherit pkgs;
         skills = {
           bad-skill = {
-            source = ./. ;
+            source = '"$REPO_ROOT"'/tests/fixtures/valid-skill;
             subdir = "/etc";
           };
         };
@@ -782,27 +842,31 @@ test_T24_default_mode_implicit_symlink() {
   trap 'rm -rf "$workdir"' RETURN
 
   touch "$workdir/flake.nix"
-  cp -R "$FIXTURES_DIR/valid-skill/sub-a" "$workdir/source-skill"
+  cp -R "$FIXTURES_DIR/valid-skill" "$workdir/source-skill"
 
-  cat > "$workdir/program-path.nix" <<EOF
+  cat > "$workdir/deploy-drv.nix" <<EOF
 let
   pkgs = import <nixpkgs> {};
-  lib = import "$REPO_ROOT/lib";
-  app = lib.mkDeploySkills pkgs {
-    skills = {
-      my-skill = {
-        source = "$workdir/source-skill";
-        subdir = "sub-a";
-      };
+  mkDeploySkills = import "$REPO_ROOT/lib/mkDeploySkills.nix";
+in mkDeploySkills {
+  inherit pkgs;
+  skills = {
+    my-skill = {
+      source = "$workdir/source-skill";
+      subdir = "sub-a";
     };
   };
-in app.program
+}
 EOF
 
-  local program_path output exit_code=0
-  program_path=$(nix eval --impure --raw --file "$workdir/program-path.nix" 2>&1) || exit_code=$?
-  assert_eq "$exit_code" 0 "nix eval should produce deploy-skills program path"
+  local deploy_drv_path program_path output exit_code=0
+  deploy_drv_path=$(nix build --impure --no-link --print-out-paths --file "$workdir/deploy-drv.nix") || exit_code=$?
+  assert_eq "$exit_code" 0 "nix build should realize deploy-skills derivation"
 
+  program_path="$deploy_drv_path/bin/deploy-skills"
+  assert_file_exists "$program_path"
+
+  exit_code=0
   output=$(cd "$workdir" && "$program_path" 2>&1) || exit_code=$?
   assert_eq "$exit_code" 0 "deploy should succeed when default mode is omitted"
   assert_contains "$output" "created (symlink)" "should create using symlink mode"
@@ -1223,15 +1287,15 @@ test_T32_nix_targetdirs_expansion() {
         inherit pkgs;
         skills = {
           my-skill = {
-            source = '"$REPO_ROOT"';
-            subdir = "tests/fixtures/valid-skill/sub-a";
+            source = '"$REPO_ROOT"'/tests/fixtures/valid-skill;
+            subdir = "sub-a";
             targetDirs = [".agents/skills" ".claude/skills"];
           };
         };
       };
-      manifest = builtins.fromJSON (builtins.readFile "${drv.passthru.manifestPath}");
+      manifest = builtins.fromJSON (builtins.unsafeDiscardStringContext (builtins.readFile drv.passthru.manifestPath));
     in manifest
-  ' 2>&1) || exit_code=$?
+  ') || exit_code=$?
 
   assert_eq "$exit_code" 0 "nix eval should succeed for targetDirs"
 
@@ -1243,7 +1307,7 @@ test_T32_nix_targetdirs_expansion() {
   assert_eq "$key2_exists" "true" "manifest should have my-skill@@.claude/skills key"
 
   # Verify entry fields for agents target
-  local agents_name agents_targetdir agents_sourcepath
+  local agents_name agents_targetdir
   agents_name=$(echo "$output" | jq -r '.["my-skill@@.agents/skills"].name')
   agents_targetdir=$(echo "$output" | jq -r '.["my-skill@@.agents/skills"].targetDir')
   assert_eq "$agents_name" "my-skill" "agents entry name"
@@ -1256,12 +1320,18 @@ test_T32_nix_targetdirs_expansion() {
   assert_eq "$claude_name" "my-skill" "claude entry name"
   assert_eq "$claude_targetdir" ".claude/skills" "claude entry targetDir"
 
-  # Verify both entries have sourcePath set
-  local agents_source claude_source
+  # Verify both entries have sourcePath ending in /sub-a
+  local agents_source claude_source agents_ends_with_sub_a=false claude_ends_with_sub_a=false
   agents_source=$(echo "$output" | jq -r '.["my-skill@@.agents/skills"].sourcePath')
   claude_source=$(echo "$output" | jq -r '.["my-skill@@.claude/skills"].sourcePath')
-  assert_contains "$agents_source" "tests/fixtures/valid-skill/sub-a" "agents sourcePath"
-  assert_contains "$claude_source" "tests/fixtures/valid-skill/sub-a" "claude sourcePath"
+  if [[ "$agents_source" == */sub-a ]]; then
+    agents_ends_with_sub_a=true
+  fi
+  if [[ "$claude_source" == */sub-a ]]; then
+    claude_ends_with_sub_a=true
+  fi
+  assert_eq "$agents_ends_with_sub_a" "true" "agents sourcePath should end with /sub-a"
+  assert_eq "$claude_ends_with_sub_a" "true" "claude sourcePath should end with /sub-a"
 }
 
 # ================================================================
@@ -1302,7 +1372,6 @@ EOF
   marker_name=$(jq -r '.skillName' "$workdir/.agents/skills/my-skill/$MARKER_FILENAME")
   assert_eq "$marker_name" "my-skill" "marker skillName should be plain name"
 }
-
 # ================================================================
 # T34: multi_target_mode_drift
 # ================================================================
@@ -1493,14 +1562,9 @@ test_T37_nix_manifest_key_collision() {
       drv = mkDeploySkills {
         inherit pkgs;
         skills = {
-          foo = {
-            source = ./. ;
-            subdir = "tests/fixtures/valid-skill/sub-a";
-            targetDir = ".agents/skills";
-          };
-          foo@@.agents/skills = {
-            source = ./. ;
-            subdir = "tests/fixtures/valid-skill/sub-a";
+          "foo@@.agents/skills" = {
+            source = '"$REPO_ROOT"'/tests/fixtures/valid-skill;
+            subdir = "sub-a";
             targetDir = ".claude/skills";
           };
         };
@@ -1509,18 +1573,17 @@ test_T37_nix_manifest_key_collision() {
   ' 2>&1) || exit_code=$?
 
   if [[ "$exit_code" -eq 0 ]]; then
-    printf "    ASSERT FAILED: nix eval should have failed for manifest key collision\n" >&2
+    printf "    ASSERT FAILED: nix eval should have failed for reserved @@ key usage\n" >&2
     return 1
   fi
-  assert_contains "$output" "Collision detected" "should mention Collision detected"
+  assert_contains "$output" "cannot contain '@@'" "should mention reserved @@ separator"
 }
 
 # ================================================================
 # T38: nix_targetdirs_empty_element
 # ================================================================
 test_T38_nix_targetdirs_empty_element() {
-  local exit_code=0
-  local output
+  local output exit_code=0
   output=$(nix eval --impure --raw --expr '
     let
       pkgs = import <nixpkgs> {};
@@ -1558,21 +1621,20 @@ test_T39_nix_targetdirs_path_normalization() {
         inherit pkgs;
         skills = {
           my-skill = {
-            source = '"$REPO_ROOT"';
-            subdir = "tests/fixtures/valid-skill/sub-a";
+            source = '"$REPO_ROOT"'/tests/fixtures/valid-skill;
+            subdir = "sub-a";
             targetDirs = [".agents/skills" "./.agents/skills" ".agents/skills/"];
           };
         };
       };
-      manifest = builtins.fromJSON (builtins.readFile "${drv.passthru.manifestPath}");
-    in builtins.attrNames manifest
+    in builtins.toJSON drv.drvAttrs
   ' 2>&1) || exit_code=$?
 
-  assert_eq "$exit_code" 0 "nix eval should detect duplicates after normalization"
-  # Should only have one entry since all paths normalize to the same value
-  local count
-  count=$(echo "$output" | wc -l | tr -d ' ')
-  assert_eq "$count" "1" "should have only one manifest entry after normalization, got $count"
+  if [[ "$exit_code" -eq 0 ]]; then
+    printf "    ASSERT FAILED: nix eval should fail for duplicate normalized targetDirs\n" >&2
+    return 1
+  fi
+  assert_contains "$output" "duplicate entries" "should mention duplicate targetDirs entries"
 }
 
 # ================================================================
@@ -1635,6 +1697,453 @@ test_T41_nix_targetdirs_wrong_type() {
   fi
   assert_contains "$output" "invalid type" "should mention invalid type"
   assert_contains "$output" "targetDir" "should suggest targetDir (singular)"
+}
+
+# ================================================================
+# T42: hm_disabled_empty
+# ================================================================
+test_T42_hm_disabled_empty() {
+  local output exit_code=0
+  output=$(eval_hm_module '{
+    enable = false;
+  }') || exit_code=$?
+
+  assert_eq "$exit_code" 0 "hm module eval should succeed when disabled"
+
+  local count
+  count=$(echo "$output" | jq 'keys | length')
+  assert_eq "$count" "0" "home.file should be empty when disabled"
+}
+
+# ================================================================
+# T43: hm_enabled_empty_skills
+# ================================================================
+test_T43_hm_enabled_empty_skills() {
+  local output exit_code=0
+  output=$(eval_hm_module '{
+    enable = true;
+    skills = {};
+  }') || exit_code=$?
+
+  assert_eq "$exit_code" 0 "hm module eval should succeed with empty skills"
+
+  local count
+  count=$(echo "$output" | jq 'keys | length')
+  assert_eq "$count" "0" "home.file should be empty with empty skills"
+}
+
+# ================================================================
+# T44: hm_single_skill_default_target
+# ================================================================
+test_T44_hm_single_skill_default_target() {
+  local output exit_code=0
+  output=$(eval_hm_module "{
+    enable = true;
+    skills = {
+      skill-a = {
+        source = ${FIXTURES_DIR}/valid-skill;
+        subdir = \"sub-a\";
+      };
+    };
+  }") || exit_code=$?
+
+  assert_eq "$exit_code" 0 "hm module eval should succeed for single skill"
+
+  local key_exists source_path ends_with_sub_a=false
+  key_exists=$(echo "$output" | jq 'has(".agents/skills/skill-a")')
+  assert_eq "$key_exists" "true" "home.file should contain default target key"
+
+  source_path=$(echo "$output" | jq -r '.[".agents/skills/skill-a"].source')
+  if [[ "$source_path" == */sub-a ]]; then
+    ends_with_sub_a=true
+  fi
+  assert_eq "$ends_with_sub_a" "true" "source path should end with /sub-a"
+}
+
+# ================================================================
+# T45: hm_multiple_skills_merge
+# ================================================================
+test_T45_hm_multiple_skills_merge() {
+  local output exit_code=0
+  output=$(eval_hm_module "{
+    enable = true;
+    skills = {
+      skill-a = {
+        source = ${FIXTURES_DIR}/valid-skill;
+        subdir = \"sub-a\";
+      };
+      skill-b = {
+        source = ${FIXTURES_DIR}/valid-skill;
+        subdir = \"sub-b\";
+      };
+    };
+  }") || exit_code=$?
+
+  assert_eq "$exit_code" 0 "hm module eval should succeed for multiple skills"
+
+  local count key_a_exists key_b_exists
+  count=$(echo "$output" | jq 'keys | length')
+  key_a_exists=$(echo "$output" | jq 'has(".agents/skills/skill-a")')
+  key_b_exists=$(echo "$output" | jq 'has(".agents/skills/skill-b")')
+
+  assert_eq "$count" "2" "home.file should contain two entries"
+  assert_eq "$key_a_exists" "true" "home.file should contain skill-a key"
+  assert_eq "$key_b_exists" "true" "home.file should contain skill-b key"
+}
+
+# ================================================================
+# T46: hm_custom_default_targetdir
+# ================================================================
+test_T46_hm_custom_default_targetdir() {
+  local output exit_code=0
+  output=$(eval_hm_module "{
+    enable = true;
+    defaultTargetDir = \".claude/skills\";
+    skills = {
+      skill-a = {
+        source = ${FIXTURES_DIR}/valid-skill;
+        subdir = \"sub-a\";
+      };
+    };
+  }") || exit_code=$?
+
+  assert_eq "$exit_code" 0 "hm module eval should succeed with custom defaultTargetDir"
+
+  local key_exists
+  key_exists=$(echo "$output" | jq 'has(".claude/skills/skill-a")')
+  assert_eq "$key_exists" "true" "home.file should use custom default targetDir"
+}
+
+# ================================================================
+# T47: hm_per_skill_targetdir_override
+# ================================================================
+test_T47_hm_per_skill_targetdir_override() {
+  local output exit_code=0
+  output=$(eval_hm_module "{
+    enable = true;
+    defaultTargetDir = \".agents/skills\";
+    skills = {
+      skill-a = {
+        source = ${FIXTURES_DIR}/valid-skill;
+        subdir = \"sub-a\";
+      };
+      skill-b = {
+        source = ${FIXTURES_DIR}/valid-skill;
+        subdir = \"sub-b\";
+        targetDir = \".claude/skills\";
+      };
+    };
+  }") || exit_code=$?
+
+  assert_eq "$exit_code" 0 "hm module eval should succeed with per-skill override"
+
+  local count key_default_exists key_override_exists
+  count=$(echo "$output" | jq 'keys | length')
+  key_default_exists=$(echo "$output" | jq 'has(".agents/skills/skill-a")')
+  key_override_exists=$(echo "$output" | jq 'has(".claude/skills/skill-b")')
+
+  assert_eq "$count" "2" "home.file should contain exactly two entries"
+  assert_eq "$key_default_exists" "true" "home.file should contain default target entry"
+  assert_eq "$key_override_exists" "true" "home.file should contain override target entry"
+}
+
+# ================================================================
+# T48: hm_missing_source_fails
+# ================================================================
+test_T48_hm_missing_source_fails() {
+  local output exit_code=0
+  output=$(eval_hm_module '{
+    enable = true;
+    skills = {
+      skill-a = {
+        subdir = "sub-a";
+      };
+    };
+  }' 2>&1) || exit_code=$?
+  output=$(echo "$output" | grep -v "^warning: Nix search path")
+
+  if [[ "$exit_code" -eq 0 ]]; then
+    printf "    ASSERT FAILED: hm module eval should fail when source is missing\n" >&2
+    return 1
+  fi
+  assert_contains "$output" "source" "error should mention missing source"
+  assert_contains "$output" "no value defined" "error should indicate missing required option"
+}
+
+# ================================================================
+# T49: hm_missing_subdir_fails
+# ================================================================
+test_T49_hm_missing_subdir_fails() {
+  local output exit_code=0
+  output=$(eval_hm_module "{
+    enable = true;
+    skills = {
+      skill-a = {
+        source = ${FIXTURES_DIR}/valid-skill;
+      };
+    };
+  }" 2>&1) || exit_code=$?
+  output=$(echo "$output" | grep -v "^warning: Nix search path")
+
+  if [[ "$exit_code" -eq 0 ]]; then
+    printf "    ASSERT FAILED: hm module eval should fail when subdir is missing\n" >&2
+    return 1
+  fi
+  assert_contains "$output" "subdir" "error should mention missing subdir"
+  assert_contains "$output" "no value defined" "error should indicate missing required option"
+}
+
+# ================================================================
+# T50: hm_source_wrong_type_fails
+# ================================================================
+test_T50_hm_source_wrong_type_fails() {
+  local output exit_code=0
+  output=$(eval_hm_module '{
+    enable = true;
+    skills = {
+      skill-a = {
+        source = "string";
+        subdir = "sub-a";
+      };
+    };
+  }' 2>&1) || exit_code=$?
+  output=$(echo "$output" | grep -v "^warning: Nix search path")
+
+  if [[ "$exit_code" -eq 0 ]]; then
+    printf "    ASSERT FAILED: hm module eval should fail for source wrong type\n" >&2
+    return 1
+  fi
+  assert_contains "$output" "source" "error should mention source"
+  assert_contains "$output" "path" "error should mention path type"
+}
+
+# ================================================================
+# T51: hm_targetdirs_multi_target
+# ================================================================
+test_T51_hm_targetdirs_multi_target() {
+  local output exit_code=0
+  output=$(eval_hm_module "{
+    enable = true;
+    skills = {
+      skill-a = {
+        source = ${FIXTURES_DIR}/valid-skill;
+        subdir = \"sub-a\";
+        targetDirs = [\".agents/skills\" \".claude/skills\"];
+      };
+    };
+  }") || exit_code=$?
+
+  assert_eq "$exit_code" 0 "hm module eval should succeed for targetDirs"
+
+  local count key_a_exists key_b_exists
+  count=$(echo "$output" | jq 'keys | length')
+  key_a_exists=$(echo "$output" | jq 'has(".agents/skills/skill-a")')
+  key_b_exists=$(echo "$output" | jq 'has(".claude/skills/skill-a")')
+
+  assert_eq "$count" "2" "home.file should contain two target entries for one skill"
+  assert_eq "$key_a_exists" "true" "home.file should contain first target entry"
+  assert_eq "$key_b_exists" "true" "home.file should contain second target entry"
+}
+
+# ================================================================
+# T52: hm_targetdir_wrong_type_fails
+# ================================================================
+test_T52_hm_targetdir_wrong_type_fails() {
+  local output exit_code=0
+  output=$(eval_hm_module "{
+    enable = true;
+    skills = {
+      skill-a = {
+        source = ${FIXTURES_DIR}/valid-skill;
+        subdir = \"sub-a\";
+        targetDir = [\"list\"];
+      };
+    };
+  }" 2>&1) || exit_code=$?
+  output=$(echo "$output" | grep -v "^warning: Nix search path")
+
+  if [[ "$exit_code" -eq 0 ]]; then
+    printf "    ASSERT FAILED: hm module eval should fail for targetDir wrong type\n" >&2
+    return 1
+  fi
+  assert_contains "$output" "targetDir" "error should mention targetDir"
+  assert_contains "$output" "type" "error should mention invalid type"
+}
+
+# ================================================================
+# T53: hm_targetdirs_wrong_type_fails
+# ================================================================
+test_T53_hm_targetdirs_wrong_type_fails() {
+  local output exit_code=0
+  output=$(eval_hm_module "{
+    enable = true;
+    skills = {
+      skill-a = {
+        source = ${FIXTURES_DIR}/valid-skill;
+        subdir = \"sub-a\";
+        targetDirs = \".agents/skills\";
+      };
+    };
+  }" 2>&1) || exit_code=$?
+  output=$(echo "$output" | grep -v "^warning: Nix search path")
+
+  if [[ "$exit_code" -eq 0 ]]; then
+    printf "    ASSERT FAILED: hm module eval should fail for targetDirs wrong type\n" >&2
+    return 1
+  fi
+  assert_contains "$output" "targetDirs" "error should mention targetDirs"
+  assert_contains "$output" "list" "error should mention list type"
+}
+
+# ================================================================
+# T54: hm_targetdir_targetdirs_mutual_exclusion_fails
+# ================================================================
+test_T54_hm_targetdir_targetdirs_mutual_exclusion_fails() {
+  local output exit_code=0
+  output=$(eval_hm_module "{
+    enable = true;
+    skills = {
+      skill-a = {
+        source = ${FIXTURES_DIR}/valid-skill;
+        subdir = \"sub-a\";
+        targetDir = \".agents/skills\";
+        targetDirs = [\".claude/skills\"];
+      };
+    };
+  }" 2>&1) || exit_code=$?
+  output=$(echo "$output" | grep -v "^warning: Nix search path")
+
+  if [[ "$exit_code" -eq 0 ]]; then
+    printf "    ASSERT FAILED: hm module eval should fail when both targetDir and targetDirs are set\n" >&2
+    return 1
+  fi
+  assert_contains "$output" "both" "error should mention both targetDir and targetDirs"
+  assert_contains "$output" "targetDirs" "error should mention targetDirs"
+}
+
+# ================================================================
+# T55: hm_targetdirs_empty_list_fails
+# ================================================================
+test_T55_hm_targetdirs_empty_list_fails() {
+  local output exit_code=0
+  output=$(eval_hm_module "{
+    enable = true;
+    skills = {
+      skill-a = {
+        source = ${FIXTURES_DIR}/valid-skill;
+        subdir = \"sub-a\";
+        targetDirs = [];
+      };
+    };
+  }" 2>&1) || exit_code=$?
+  output=$(echo "$output" | grep -v "^warning: Nix search path")
+
+  if [[ "$exit_code" -eq 0 ]]; then
+    printf "    ASSERT FAILED: hm module eval should fail for empty targetDirs\n" >&2
+    return 1
+  fi
+  assert_contains "$output" "empty" "error should mention empty targetDirs"
+  assert_contains "$output" "targetDirs" "error should mention targetDirs"
+}
+
+# ================================================================
+# T56: hm_targetdirs_absolute_entry_fails
+# ================================================================
+test_T56_hm_targetdirs_absolute_entry_fails() {
+  local output exit_code=0
+  output=$(eval_hm_module "{
+    enable = true;
+    skills = {
+      skill-a = {
+        source = ${FIXTURES_DIR}/valid-skill;
+        subdir = \"sub-a\";
+        targetDirs = [\"/etc/skills\"];
+      };
+    };
+  }" 2>&1) || exit_code=$?
+  output=$(echo "$output" | grep -v "^warning: Nix search path")
+
+  if [[ "$exit_code" -eq 0 ]]; then
+    printf "    ASSERT FAILED: hm module eval should fail for absolute targetDirs entry\n" >&2
+    return 1
+  fi
+  assert_contains "$output" "targetDirs" "error should mention targetDirs"
+  assert_contains "$output" "relative" "error should mention relative path requirement"
+}
+
+# ================================================================
+# T57: hm_targetdirs_dotdot_entry_fails
+# ================================================================
+test_T57_hm_targetdirs_dotdot_entry_fails() {
+  local output exit_code=0
+  output=$(eval_hm_module "{
+    enable = true;
+    skills = {
+      skill-a = {
+        source = ${FIXTURES_DIR}/valid-skill;
+        subdir = \"sub-a\";
+        targetDirs = [\"../escape\"];
+      };
+    };
+  }" 2>&1) || exit_code=$?
+  output=$(echo "$output" | grep -v "^warning: Nix search path")
+
+  if [[ "$exit_code" -eq 0 ]]; then
+    printf "    ASSERT FAILED: hm module eval should fail for targetDirs entry with ..\n" >&2
+    return 1
+  fi
+  assert_contains "$output" "targetDirs" "error should mention targetDirs"
+  assert_contains "$output" "forbidden" "error should mention forbidden traversal"
+}
+
+# ================================================================
+# T58: hm_targetdirs_empty_element_fails
+# ================================================================
+test_T58_hm_targetdirs_empty_element_fails() {
+  local output exit_code=0
+  output=$(eval_hm_module "{
+    enable = true;
+    skills = {
+      skill-a = {
+        source = ${FIXTURES_DIR}/valid-skill;
+        subdir = \"sub-a\";
+        targetDirs = [\"\"];
+      };
+    };
+  }" 2>&1) || exit_code=$?
+  output=$(echo "$output" | grep -v "^warning: Nix search path")
+
+  if [[ "$exit_code" -eq 0 ]]; then
+    printf "    ASSERT FAILED: hm module eval should fail for empty targetDirs entry\n" >&2
+    return 1
+  fi
+  assert_contains "$output" "targetDirs" "error should mention targetDirs"
+  assert_contains "$output" "cannot be empty" "error should mention empty entry"
+}
+
+# ================================================================
+# T59: hm_targetdirs_normalized_duplicate_fails
+# ================================================================
+test_T59_hm_targetdirs_normalized_duplicate_fails() {
+  local output exit_code=0
+  output=$(eval_hm_module "{
+    enable = true;
+    skills = {
+      skill-a = {
+        source = ${FIXTURES_DIR}/valid-skill;
+        subdir = \"sub-a\";
+        targetDirs = [\".agents/skills\" \"./.agents/skills\" \".agents/skills/\"];
+      };
+    };
+  }" 2>&1) || exit_code=$?
+  output=$(echo "$output" | grep -v "^warning: Nix search path")
+
+  if [[ "$exit_code" -eq 0 ]]; then
+    printf "    ASSERT FAILED: hm module eval should fail for duplicate normalized targetDirs entries\n" >&2
+    return 1
+  fi
+  assert_contains "$output" "targetDirs" "error should mention targetDirs"
+  assert_contains "$output" "duplicate" "error should mention duplicate entries"
 }
 
 # ================================================================
@@ -1703,6 +2212,24 @@ if [[ -n "$IN_NIX_SANDBOX" || "$NIX_EVAL_AVAILABLE" != "true" ]]; then
   skip_test test_T39_nix_targetdirs_path_normalization "requires nix eval --impure"
   skip_test test_T40_nix_targetdir_wrong_type "requires nix eval --impure"
   skip_test test_T41_nix_targetdirs_wrong_type "requires nix eval --impure"
+  skip_test test_T42_hm_disabled_empty "requires nix eval --impure"
+  skip_test test_T43_hm_enabled_empty_skills "requires nix eval --impure"
+  skip_test test_T44_hm_single_skill_default_target "requires nix eval --impure"
+  skip_test test_T45_hm_multiple_skills_merge "requires nix eval --impure"
+  skip_test test_T46_hm_custom_default_targetdir "requires nix eval --impure"
+  skip_test test_T47_hm_per_skill_targetdir_override "requires nix eval --impure"
+  skip_test test_T48_hm_missing_source_fails "requires nix eval --impure"
+  skip_test test_T49_hm_missing_subdir_fails "requires nix eval --impure"
+  skip_test test_T50_hm_source_wrong_type_fails "requires nix eval --impure"
+  skip_test test_T51_hm_targetdirs_multi_target "requires nix eval --impure"
+  skip_test test_T52_hm_targetdir_wrong_type_fails "requires nix eval --impure"
+  skip_test test_T53_hm_targetdirs_wrong_type_fails "requires nix eval --impure"
+  skip_test test_T54_hm_targetdir_targetdirs_mutual_exclusion_fails "requires nix eval --impure"
+  skip_test test_T55_hm_targetdirs_empty_list_fails "requires nix eval --impure"
+  skip_test test_T56_hm_targetdirs_absolute_entry_fails "requires nix eval --impure"
+  skip_test test_T57_hm_targetdirs_dotdot_entry_fails "requires nix eval --impure"
+  skip_test test_T58_hm_targetdirs_empty_element_fails "requires nix eval --impure"
+  skip_test test_T59_hm_targetdirs_normalized_duplicate_fails "requires nix eval --impure"
 else
   run_test test_T36_nix_skill_name_with_at_signs
   run_test test_T37_nix_manifest_key_collision
@@ -1710,6 +2237,24 @@ else
   run_test test_T39_nix_targetdirs_path_normalization
   run_test test_T40_nix_targetdir_wrong_type
   run_test test_T41_nix_targetdirs_wrong_type
+  run_test test_T42_hm_disabled_empty
+  run_test test_T43_hm_enabled_empty_skills
+  run_test test_T44_hm_single_skill_default_target
+  run_test test_T45_hm_multiple_skills_merge
+  run_test test_T46_hm_custom_default_targetdir
+  run_test test_T47_hm_per_skill_targetdir_override
+  run_test test_T48_hm_missing_source_fails
+  run_test test_T49_hm_missing_subdir_fails
+  run_test test_T50_hm_source_wrong_type_fails
+  run_test test_T51_hm_targetdirs_multi_target
+  run_test test_T52_hm_targetdir_wrong_type_fails
+  run_test test_T53_hm_targetdirs_wrong_type_fails
+  run_test test_T54_hm_targetdir_targetdirs_mutual_exclusion_fails
+  run_test test_T55_hm_targetdirs_empty_list_fails
+  run_test test_T56_hm_targetdirs_absolute_entry_fails
+  run_test test_T57_hm_targetdirs_dotdot_entry_fails
+  run_test test_T58_hm_targetdirs_empty_element_fails
+  run_test test_T59_hm_targetdirs_normalized_duplicate_fails
 fi
 
 echo ""

@@ -16,6 +16,7 @@
         });
   in {
     lib = import ./lib;
+    homeManagerModules.skills-deployer = import ./modules/home-manager.nix;
 
     # Self-test app (uses fixtures)
     apps = eachSystem ({pkgs, ...}: {
